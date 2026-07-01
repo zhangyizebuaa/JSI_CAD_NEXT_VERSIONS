@@ -182,7 +182,8 @@ static std::pair<size_t, size_t> find_aabb(size_t id, std::vector<AABBResult> &a
 
 struct DistPairRef {
   float d2;
-  int slot;
+  int slot1;
+  int slot2;
   int i;
   int j;
 };
@@ -201,14 +202,16 @@ static inline float center_distance_sq(size_t i, size_t j, const float *c1, cons
 
 static bool dist_pair_ref_less(const DistPairRef &a, const DistPairRef &b) {
   if (a.d2 != b.d2) return a.d2 < b.d2;
-  if (a.slot != b.slot) return a.slot < b.slot;
+  if (a.slot1 != b.slot1) return a.slot1 < b.slot1;
+  if (a.slot2 != b.slot2) return a.slot2 < b.slot2;
   if (a.i != b.i) return a.i < b.i;
   return a.j < b.j;
 }
 
-static void dist_pair_top_push(std::vector<DistPairRef> &best, int limit, float d2, int slot, int i, int j) {
+static void dist_pair_top_push(std::vector<DistPairRef> &best, int limit, float d2, int slot1, int slot2, int i,
+                               int j) {
   if (limit <= 0) return;
-  DistPairRef p{d2, slot, i, j};
+  DistPairRef p{d2, slot1, slot2, i, j};
   if (static_cast<int>(best.size()) < limit) {
     best.push_back(p);
     std::sort(best.begin(), best.end(), dist_pair_ref_less);
@@ -221,21 +224,26 @@ static void dist_pair_top_push(std::vector<DistPairRef> &best, int limit, float 
 
 static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef> &pairs) {
   pairs.clear();
-  if (ch.side1.empty() || ch.side1.size() != ch.side2.size()) return 0.0f;
+  if (ch.side1.empty() || ch.side2.empty()) return 0.0f;
   const int limit = std::max(1, k_of_topk);
 #ifdef _OPENMP
   struct DistRowTask {
-    int slot;
+    int slot1;
+    int slot2;
     int i;
   };
   std::vector<DistRowTask> rows;
   size_t total_pairs = 0;
-  for (size_t slot = 0; slot < ch.side1.size(); ++slot) {
-    const int n1 = ch.side1[slot].naabb_width * ch.side1[slot].naabb_width;
-    const int n2 = ch.side2[slot].naabb_width * ch.side2[slot].naabb_width;
-    total_pairs += static_cast<size_t>(n1) * static_cast<size_t>(n2);
-    rows.reserve(rows.size() + static_cast<size_t>(n1));
-    for (int i = 0; i < n1; ++i) rows.push_back({static_cast<int>(slot), i});
+  for (size_t slot1 = 0; slot1 < ch.side1.size(); ++slot1) {
+    const int n1 = ch.side1[slot1].naabb_width * ch.side1[slot1].naabb_width;
+    for (size_t slot2 = 0; slot2 < ch.side2.size(); ++slot2) {
+      const int n2 = ch.side2[slot2].naabb_width * ch.side2[slot2].naabb_width;
+      total_pairs += static_cast<size_t>(n1) * static_cast<size_t>(n2);
+      rows.reserve(rows.size() + static_cast<size_t>(n1));
+      for (int i = 0; i < n1; ++i) {
+        rows.push_back({static_cast<int>(slot1), static_cast<int>(slot2), i});
+      }
+    }
   }
   if (rows.empty()) return 0.0f;
   std::vector<std::vector<DistPairRef>> thread_bests;
@@ -248,16 +256,17 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
     local.reserve(static_cast<size_t>(limit));
 #pragma omp for schedule(static) nowait
     for (size_t row = 0; row < rows.size(); ++row) {
-      const int slot = rows[row].slot;
+      const int slot1 = rows[row].slot1;
+      const int slot2 = rows[row].slot2;
       const int i = rows[row].i;
-      const auto &a1 = ch.side1[static_cast<size_t>(slot)];
-      const auto &a2 = ch.side2[static_cast<size_t>(slot)];
+      const auto &a1 = ch.side1[static_cast<size_t>(slot1)];
+      const auto &a2 = ch.side2[static_cast<size_t>(slot2)];
       const int n2 = a2.naabb_width * a2.naabb_width;
       for (int j = 0; j < n2; ++j) {
         dist_pair_top_push(local, limit,
                            center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
                                               a2.d_aabb_center),
-                           slot, i, j);
+                           slot1, slot2, i, j);
       }
     }
   }
@@ -265,23 +274,25 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
   best.reserve(static_cast<size_t>(limit));
   for (auto &local : thread_bests) {
     for (const auto &p : local) {
-      dist_pair_top_push(best, limit, p.d2, p.slot, p.i, p.j);
+      dist_pair_top_push(best, limit, p.d2, p.slot1, p.slot2, p.i, p.j);
     }
   }
 #else
   std::vector<DistPairRef> best;
   best.reserve(static_cast<size_t>(limit));
-  for (size_t slot = 0; slot < ch.side1.size(); ++slot) {
-    const auto &a1 = ch.side1[slot];
-    const auto &a2 = ch.side2[slot];
+  for (size_t slot1 = 0; slot1 < ch.side1.size(); ++slot1) {
+    const auto &a1 = ch.side1[slot1];
     const int n1 = a1.naabb_width * a1.naabb_width;
-    const int n2 = a2.naabb_width * a2.naabb_width;
-    for (int i = 0; i < n1; ++i) {
-      for (int j = 0; j < n2; ++j) {
-        dist_pair_top_push(best, limit,
-                           center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
-                                              a2.d_aabb_center),
-                           static_cast<int>(slot), i, j);
+    for (size_t slot2 = 0; slot2 < ch.side2.size(); ++slot2) {
+      const auto &a2 = ch.side2[slot2];
+      const int n2 = a2.naabb_width * a2.naabb_width;
+      for (int i = 0; i < n1; ++i) {
+        for (int j = 0; j < n2; ++j) {
+          dist_pair_top_push(best, limit,
+                             center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
+                                                a2.d_aabb_center),
+                             static_cast<int>(slot1), static_cast<int>(slot2), i, j);
+        }
       }
     }
   }
@@ -322,7 +333,8 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
   while (true) {
     ++round;
     auto &ch = chains[0];
-    printf("Round: %d (pair refine, aligned_slots=%zu)\n", round, ch.side1.size());
+    printf("Round: %d (independent refine, side1_slots=%zu, side2_slots=%zu)\n", round, ch.side1.size(),
+           ch.side2.size());
     std::vector<DistPairRef> pairs;
     current_min_dist = dist_collect_top_pairs(ch, pairs);
     printf("[current_min_dist] %lf\n", current_min_dist);
@@ -336,54 +348,41 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
       int slot;
       int bbox;
     };
-    struct DistRefineJob {
-      DistEndpoint side1;
-      DistEndpoint side2;
+    std::vector<DistEndpoint> endpoints1;
+    std::vector<DistEndpoint> endpoints2;
+    auto add_unique = [](std::vector<DistEndpoint> &endpoints, int slot, int bbox) {
+      for (const auto &endpoint : endpoints) {
+        if (endpoint.slot == slot && endpoint.bbox == bbox) return;
+      }
+      endpoints.push_back({slot, bbox});
     };
-    std::vector<DistRefineJob> jobs;
-    if constexpr (JSI_CAD_PRESERVE_PAIR_RELATION) {
-      jobs.reserve(pairs.size());
-      for (const auto &p : pairs) {
-        jobs.push_back({{p.slot, p.i}, {p.slot, p.j}});
-      }
-    } else {
-      std::vector<DistEndpoint> endpoints1;
-      std::vector<DistEndpoint> endpoints2;
-      auto add_unique = [](std::vector<DistEndpoint> &endpoints, int slot, int bbox) {
-        for (const auto &endpoint : endpoints) {
-          if (endpoint.slot == slot && endpoint.bbox == bbox) return;
-        }
-        endpoints.push_back({slot, bbox});
-      };
-      for (const auto &p : pairs) {
-        add_unique(endpoints1, p.slot, p.i);
-        add_unique(endpoints2, p.slot, p.j);
-      }
-      jobs.reserve(endpoints1.size() * endpoints2.size());
-      for (const auto &endpoint1 : endpoints1) {
-        for (const auto &endpoint2 : endpoints2) {
-          jobs.push_back({endpoint1, endpoint2});
-        }
-      }
+    for (const auto &p : pairs) {
+      add_unique(endpoints1, p.slot1, p.i);
+      add_unique(endpoints2, p.slot2, p.j);
     }
 
     DistChain next;
-    next.side1.resize(jobs.size());
-    next.side2.resize(jobs.size());
-    for (size_t k = 0; k < jobs.size(); ++k) {
-      const auto &job = jobs[k];
-      if (job.side1.slot < 0 || job.side2.slot < 0 ||
-          static_cast<size_t>(job.side1.slot) >= ch.side1.size() ||
-          static_cast<size_t>(job.side2.slot) >= ch.side2.size()) {
-        printf("ERROR! bad distance endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
+    next.side1.resize(endpoints1.size());
+    next.side2.resize(endpoints2.size());
+    for (size_t k = 0; k < endpoints1.size(); ++k) {
+      const auto &endpoint = endpoints1[k];
+      if (endpoint.slot < 0 || static_cast<size_t>(endpoint.slot) >= ch.side1.size()) {
+        printf("ERROR! bad distance side1 endpoint slot=%d\n", endpoint.slot);
         std::exit(-1);
       }
       EvalAndConstructTask tside1 = make_dist_refine_task(
-          t1, ch.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
-      EvalAndConstructTask tside2 = make_dist_refine_task(
-          t2, ch.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
+          t1, ch.side1[static_cast<size_t>(endpoint.slot)], endpoint.bbox, 1, global_nuv);
       next.side1[k] = run_evaluation_and_construction_task(tside1, cuda_streams[current_stream_id]);
       current_stream_id = (current_stream_id + 1) % num_cuda_streams;
+    }
+    for (size_t k = 0; k < endpoints2.size(); ++k) {
+      const auto &endpoint = endpoints2[k];
+      if (endpoint.slot < 0 || static_cast<size_t>(endpoint.slot) >= ch.side2.size()) {
+        printf("ERROR! bad distance side2 endpoint slot=%d\n", endpoint.slot);
+        std::exit(-1);
+      }
+      EvalAndConstructTask tside2 = make_dist_refine_task(
+          t2, ch.side2[static_cast<size_t>(endpoint.slot)], endpoint.bbox, 2, global_nuv);
       next.side2[k] = run_evaluation_and_construction_task(tside2, cuda_streams[current_stream_id]);
       current_stream_id = (current_stream_id + 1) % num_cuda_streams;
     }

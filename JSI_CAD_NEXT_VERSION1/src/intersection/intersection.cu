@@ -169,7 +169,8 @@ static std::pair<int, int> find_aabb(int id, std::vector<AABBResult> &aabbs) {
 }
 
 struct IntersectPairRef {
-  int slot;
+  int slot1;
+  int slot2;
   int i;
   int j;
 };
@@ -181,29 +182,54 @@ struct IntersectChain {
 
 static int intersect_collect_pairs(const IntersectChain &ch, std::vector<IntersectPairRef> &pairs) {
   pairs.clear();
-  if (ch.side1.empty() || ch.side1.size() != ch.side2.size()) return 0;
+  if (ch.side1.empty() || ch.side2.empty()) return 0;
 #ifdef _OPENMP
-  std::vector<std::vector<IntersectPairRef>> slot_pairs(ch.side1.size());
-#pragma omp parallel for schedule(dynamic) if (ch.side1.size() > 4)
-  for (long long slot_ll = 0; slot_ll < static_cast<long long>(ch.side1.size()); ++slot_ll) {
-    const size_t slot = static_cast<size_t>(slot_ll);
-    auto &local_pairs = slot_pairs[slot];
-#else
-  for (size_t slot = 0; slot < ch.side1.size(); ++slot) {
-    auto &local_pairs = pairs;
-#endif
-    const auto &a1 = ch.side1[slot];
-    const auto &a2 = ch.side2[slot];
+  struct IntersectSlotTask {
+    size_t slot1;
+    size_t slot2;
+  };
+  std::vector<IntersectSlotTask> slot_tasks;
+  slot_tasks.reserve(ch.side1.size() * ch.side2.size());
+  for (size_t slot1 = 0; slot1 < ch.side1.size(); ++slot1) {
+    for (size_t slot2 = 0; slot2 < ch.side2.size(); ++slot2) {
+      slot_tasks.push_back({slot1, slot2});
+    }
+  }
+  std::vector<std::vector<IntersectPairRef>> slot_pairs(slot_tasks.size());
+#pragma omp parallel for schedule(dynamic) if (slot_tasks.size() > 4)
+  for (long long task_idx = 0; task_idx < static_cast<long long>(slot_tasks.size()); ++task_idx) {
+    const auto task = slot_tasks[static_cast<size_t>(task_idx)];
+    auto &local_pairs = slot_pairs[static_cast<size_t>(task_idx)];
+    const auto &a1 = ch.side1[task.slot1];
+    const auto &a2 = ch.side2[task.slot2];
     const int n1 = a1.naabb_width * a1.naabb_width;
     const int n2 = a2.naabb_width * a2.naabb_width;
     for (int i = 0; i < n1; ++i) {
       for (int j = 0; j < n2; ++j) {
         if (AabbOverlap(i, j, a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius)) {
-          local_pairs.push_back({static_cast<int>(slot), i, j});
+          local_pairs.push_back(
+              {static_cast<int>(task.slot1), static_cast<int>(task.slot2), i, j});
         }
       }
     }
   }
+#else
+  for (size_t slot1 = 0; slot1 < ch.side1.size(); ++slot1) {
+    const auto &a1 = ch.side1[slot1];
+    const int n1 = a1.naabb_width * a1.naabb_width;
+    for (size_t slot2 = 0; slot2 < ch.side2.size(); ++slot2) {
+      const auto &a2 = ch.side2[slot2];
+      const int n2 = a2.naabb_width * a2.naabb_width;
+      for (int i = 0; i < n1; ++i) {
+        for (int j = 0; j < n2; ++j) {
+          if (AabbOverlap(i, j, a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius)) {
+            pairs.push_back({static_cast<int>(slot1), static_cast<int>(slot2), i, j});
+          }
+        }
+      }
+    }
+  }
+#endif
 #ifdef _OPENMP
   size_t total = 0;
   for (const auto &local : slot_pairs) {
@@ -242,7 +268,8 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
   int round = 0;
   while (true) {
     ++round;
-    printf("Round: %d (pair refine, aligned_slots=%zu)\n", round, chain.side1.size());
+    printf("Round: %d (independent refine, side1_slots=%zu, side2_slots=%zu)\n", round, chain.side1.size(),
+           chain.side2.size());
     std::vector<IntersectPairRef> pairs;
     const int npairs = intersect_collect_pairs(chain, pairs);
     printf("Round %d: overlap pairs = %d\n", round, npairs);
@@ -254,53 +281,40 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
       int slot;
       int bbox;
     };
-    struct IntersectRefineJob {
-      IntersectEndpoint side1;
-      IntersectEndpoint side2;
+    std::vector<IntersectEndpoint> endpoints1;
+    std::vector<IntersectEndpoint> endpoints2;
+    auto add_unique = [](std::vector<IntersectEndpoint> &endpoints, int slot, int bbox) {
+      for (const auto &endpoint : endpoints) {
+        if (endpoint.slot == slot && endpoint.bbox == bbox) return;
+      }
+      endpoints.push_back({slot, bbox});
     };
-    std::vector<IntersectRefineJob> jobs;
-    if constexpr (JSI_CAD_PRESERVE_PAIR_RELATION) {
-      jobs.reserve(pairs.size());
-      for (const auto &p : pairs) {
-        jobs.push_back({{p.slot, p.i}, {p.slot, p.j}});
-      }
-    } else {
-      std::vector<IntersectEndpoint> endpoints1;
-      std::vector<IntersectEndpoint> endpoints2;
-      auto add_unique = [](std::vector<IntersectEndpoint> &endpoints, int slot, int bbox) {
-        for (const auto &endpoint : endpoints) {
-          if (endpoint.slot == slot && endpoint.bbox == bbox) return;
-        }
-        endpoints.push_back({slot, bbox});
-      };
-      for (const auto &p : pairs) {
-        add_unique(endpoints1, p.slot, p.i);
-        add_unique(endpoints2, p.slot, p.j);
-      }
-      jobs.reserve(endpoints1.size() * endpoints2.size());
-      for (const auto &endpoint1 : endpoints1) {
-        for (const auto &endpoint2 : endpoints2) {
-          jobs.push_back({endpoint1, endpoint2});
-        }
-      }
+    for (const auto &p : pairs) {
+      add_unique(endpoints1, p.slot1, p.i);
+      add_unique(endpoints2, p.slot2, p.j);
     }
 
     IntersectChain next;
-    next.side1.resize(jobs.size());
-    next.side2.resize(jobs.size());
-    for (size_t k = 0; k < jobs.size(); ++k) {
-      const auto &job = jobs[k];
-      if (job.side1.slot < 0 || job.side2.slot < 0 ||
-          static_cast<size_t>(job.side1.slot) >= chain.side1.size() ||
-          static_cast<size_t>(job.side2.slot) >= chain.side2.size()) {
-        printf("ERROR! bad intersect endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
+    next.side1.resize(endpoints1.size());
+    next.side2.resize(endpoints2.size());
+    for (size_t k = 0; k < endpoints1.size(); ++k) {
+      const auto &endpoint = endpoints1[k];
+      if (endpoint.slot < 0 || static_cast<size_t>(endpoint.slot) >= chain.side1.size()) {
+        printf("ERROR! bad intersect side1 endpoint slot=%d\n", endpoint.slot);
         std::exit(-1);
       }
       EvalAndConstructTask task1 = make_intersect_refine_task(
-          t1, chain.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
-      EvalAndConstructTask task2 = make_intersect_refine_task(
-          t2, chain.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
+          t1, chain.side1[static_cast<size_t>(endpoint.slot)], endpoint.bbox, 1, global_nuv);
       next.side1[k] = run_evaluation_and_construction_task(task1);
+    }
+    for (size_t k = 0; k < endpoints2.size(); ++k) {
+      const auto &endpoint = endpoints2[k];
+      if (endpoint.slot < 0 || static_cast<size_t>(endpoint.slot) >= chain.side2.size()) {
+        printf("ERROR! bad intersect side2 endpoint slot=%d\n", endpoint.slot);
+        std::exit(-1);
+      }
+      EvalAndConstructTask task2 = make_intersect_refine_task(
+          t2, chain.side2[static_cast<size_t>(endpoint.slot)], endpoint.bbox, 2, global_nuv);
       next.side2[k] = run_evaluation_and_construction_task(task2);
     }
     chain = std::move(next);
