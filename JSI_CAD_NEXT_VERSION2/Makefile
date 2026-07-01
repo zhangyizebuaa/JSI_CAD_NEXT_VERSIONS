@@ -1,10 +1,9 @@
 CXX             ?= g++
-CXXFLAGS        ?= -O3 -std=c++17 -fopenmp -I include/ -I src/
-SVE_CXXFLAGS    ?= -mcpu=native -DJSI_CAD_EXPLICIT_SVE
+CXXFLAGS        ?= -O3 -std=c++17 -fopenmp -DJSI_CAD_PRESERVE_PAIR_RELATION=1 -I include/ -I src/
 LDFLAGS         ?=
 USE_ASCEND_ACL  ?= 0
 ASCEND_HOME     ?= /usr/local/Ascend/ascend-toolkit/latest
-PERF_CXXFLAGS   ?= -O3 -g -fno-omit-frame-pointer -std=c++17 -fopenmp -I include/ -I src/
+PERF_CXXFLAGS   ?= -O3 -g -fno-omit-frame-pointer -std=c++17 -fopenmp -DJSI_CAD_PRESERVE_PAIR_RELATION=1 -I include/ -I src/
 
 ifeq ($(USE_ASCEND_ACL),1)
 	CXXFLAGS += -DUSE_ASCEND_ACL -I $(ASCEND_HOME)/include
@@ -41,10 +40,10 @@ build/evaluation.o: src/evaluation/evaluation.cu src/evaluation/evaluation.cuh s
 	$(CXX) $(CXXFLAGS) -x c++ -c src/evaluation/evaluation.cu -o build/evaluation.o
 
 build/distance_analysis.o: src/distance_analysis/distance_analysis.cu src/distance_analysis/distance_analysis.cuh src/evaluation/evaluation.cuh src/common/common.cuh | prepare
-	$(CXX) $(CXXFLAGS) $(SVE_CXXFLAGS) -x c++ -c src/distance_analysis/distance_analysis.cu -o build/distance_analysis.o
+	$(CXX) $(CXXFLAGS) -x c++ -c src/distance_analysis/distance_analysis.cu -o build/distance_analysis.o
 
 build/intersection.o: src/intersection/intersection.cu src/intersection/intersection.cuh src/evaluation/evaluation.cuh src/common/common.cuh | prepare
-	$(CXX) $(CXXFLAGS) $(SVE_CXXFLAGS) -x c++ -c src/intersection/intersection.cu -o build/intersection.o
+	$(CXX) $(CXXFLAGS) -x c++ -c src/intersection/intersection.cu -o build/intersection.o
 
 build/ascend_hotspots.o: src/ascend/ascend_hotspots.cpp src/ascend/ascend_hotspots.hpp | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c src/ascend/ascend_hotspots.cpp -o build/ascend_hotspots.o

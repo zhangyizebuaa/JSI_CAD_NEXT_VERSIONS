@@ -1,13 +1,10 @@
 # JSI_CAD_NEXT Version 1
 
-Based on Version 0. This version groups all historical OpenMP optimizations into one stage.
+Based on Version 0. This stage combines the changes originally introduced in historical Versions 1, 3, and 6.
 
-OpenMP is used for:
-
-- NURBS surface sampling on the u/v grid.
-- Distance top-k pair collection with thread-local candidate lists and deterministic merging.
-- Intersection pair collection across aligned slots.
-- Batched construction of next-round intersection refinement tasks.
-
-The aligned pair-refinement data structures required by the later OpenMP regions are included in this version.
-SVE and duplicate refinement-task reuse are not included.
+- OpenMP-parallel NURBS sampling from historical Version 1.
+- OpenMP distance candidate collection with thread-local top-k lists from historical Version 3.
+- OpenMP intersection candidate collection across slots from historical Version 6.
+- Pair/slot support structures are included as dependencies.
+- Selected endpoints are still recombined as a Cartesian product; pair correspondence is not preserved yet.
+- SVE, batched intersection refinement, and duplicate-region reuse are not included.

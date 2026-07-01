@@ -17,6 +17,10 @@
 
 #include "evaluation/evaluation.cuh"
 #include "jsi_cad.hpp"
+
+#ifndef JSI_CAD_PRESERVE_PAIR_RELATION
+#define JSI_CAD_PRESERVE_PAIR_RELATION 0
+#endif
 #include "common/profiler.hpp"
 
 static int global_nuv = 64;
@@ -328,19 +332,56 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
     if (round == max_layers) break;
     if (round == 1) global_nuv = next_nuv;
 
+    struct DistEndpoint {
+      int slot;
+      int bbox;
+    };
+    struct DistRefineJob {
+      DistEndpoint side1;
+      DistEndpoint side2;
+    };
+    std::vector<DistRefineJob> jobs;
+    if constexpr (JSI_CAD_PRESERVE_PAIR_RELATION) {
+      jobs.reserve(pairs.size());
+      for (const auto &p : pairs) {
+        jobs.push_back({{p.slot, p.i}, {p.slot, p.j}});
+      }
+    } else {
+      std::vector<DistEndpoint> endpoints1;
+      std::vector<DistEndpoint> endpoints2;
+      auto add_unique = [](std::vector<DistEndpoint> &endpoints, int slot, int bbox) {
+        for (const auto &endpoint : endpoints) {
+          if (endpoint.slot == slot && endpoint.bbox == bbox) return;
+        }
+        endpoints.push_back({slot, bbox});
+      };
+      for (const auto &p : pairs) {
+        add_unique(endpoints1, p.slot, p.i);
+        add_unique(endpoints2, p.slot, p.j);
+      }
+      jobs.reserve(endpoints1.size() * endpoints2.size());
+      for (const auto &endpoint1 : endpoints1) {
+        for (const auto &endpoint2 : endpoints2) {
+          jobs.push_back({endpoint1, endpoint2});
+        }
+      }
+    }
+
     DistChain next;
-    next.side1.resize(pairs.size());
-    next.side2.resize(pairs.size());
-    for (size_t k = 0; k < pairs.size(); ++k) {
-      const auto &p = pairs[k];
-      if (p.slot < 0 || static_cast<size_t>(p.slot) >= ch.side1.size()) {
-        printf("ERROR! bad distance pair slot=%d\n", p.slot);
+    next.side1.resize(jobs.size());
+    next.side2.resize(jobs.size());
+    for (size_t k = 0; k < jobs.size(); ++k) {
+      const auto &job = jobs[k];
+      if (job.side1.slot < 0 || job.side2.slot < 0 ||
+          static_cast<size_t>(job.side1.slot) >= ch.side1.size() ||
+          static_cast<size_t>(job.side2.slot) >= ch.side2.size()) {
+        printf("ERROR! bad distance endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
         std::exit(-1);
       }
-      EvalAndConstructTask tside1 =
-          make_dist_refine_task(t1, ch.side1[static_cast<size_t>(p.slot)], p.i, 1, global_nuv);
-      EvalAndConstructTask tside2 =
-          make_dist_refine_task(t2, ch.side2[static_cast<size_t>(p.slot)], p.j, 2, global_nuv);
+      EvalAndConstructTask tside1 = make_dist_refine_task(
+          t1, ch.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
+      EvalAndConstructTask tside2 = make_dist_refine_task(
+          t2, ch.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
       next.side1[k] = run_evaluation_and_construction_task(tside1, cuda_streams[current_stream_id]);
       current_stream_id = (current_stream_id + 1) % num_cuda_streams;
       next.side2[k] = run_evaluation_and_construction_task(tside2, cuda_streams[current_stream_id]);

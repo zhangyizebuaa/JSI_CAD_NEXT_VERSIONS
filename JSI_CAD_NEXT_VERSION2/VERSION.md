@@ -1,8 +1,8 @@
 # JSI_CAD_NEXT Version 2
 
-Based on Version 1.
+Based on Version 1. This stage applies the change originally introduced in historical Version 2.
 
-- Adds SVE vector distance evaluation during distance top-k pair collection.
-- Adds SVE vector AABB overlap evaluation during intersection pair collection.
-- Retains all OpenMP regions from Version 1.
-- Does not reuse duplicate refinement tasks.
+- Preserves each selected `(side1 AABB, side2 AABB)` pair when constructing the next refinement round.
+- Stops recombining independently selected side1 and side2 endpoints as a Cartesian product.
+- Retains all OpenMP changes from Version 1.
+- SVE, batched intersection refinement, and duplicate-region reuse are not included.

@@ -1,12 +1,10 @@
 #include "intersection.cuh"
 
 #include <cmath>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <queue>
-#include <unordered_map>
 #include <utility>
 
 #include <vector>
@@ -26,6 +24,10 @@
 #include "common/profiler.hpp"
 #include "evaluation/evaluation.cuh"
 #include "jsi_cad.hpp"
+
+#ifndef JSI_CAD_PRESERVE_PAIR_RELATION
+#define JSI_CAD_PRESERVE_PAIR_RELATION 0
+#endif
 
 static int global_nuv = 16;
 
@@ -287,17 +289,6 @@ static EvalAndConstructTask make_intersect_refine_task(const EvalAndConstructTas
   return t;
 }
 
-static void run_intersect_refine_batch(const std::vector<EvalAndConstructTask> &tasks, std::vector<AABBResult> &out) {
-  out.resize(tasks.size());
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) if (tasks.size() > 4)
-#endif
-  for (size_t k = 0; k < tasks.size(); ++k) {
-    EvalAndConstructTask t = tasks[k];
-    out[k] = run_evaluation_and_construction_task(t);
-  }
-}
-
 void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
   CAD_PROFILE_SCOPE("intersection");
   IntersectChain chain;
@@ -315,63 +306,58 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
     if (npairs == 0) break;
     if (npairs > 512 && global_nuv > 4) global_nuv /= 2;
 
+    struct IntersectEndpoint {
+      int slot;
+      int bbox;
+    };
     struct IntersectRefineJob {
-      size_t side1_unit;
-      size_t side2_unit;
+      IntersectEndpoint side1;
+      IntersectEndpoint side2;
     };
-    std::vector<EvalAndConstructTask> tasks1;
-    std::vector<EvalAndConstructTask> tasks2;
     std::vector<IntersectRefineJob> jobs;
-    std::unordered_map<uint64_t, size_t> task_index1;
-    std::unordered_map<uint64_t, size_t> task_index2;
-    tasks1.reserve(pairs.size());
-    tasks2.reserve(pairs.size());
-    jobs.reserve(pairs.size());
-    task_index1.reserve(pairs.size());
-    task_index2.reserve(pairs.size());
-    auto find_or_add_task = [](std::unordered_map<uint64_t, size_t> &task_index,
-                               std::vector<EvalAndConstructTask> &tasks, int slot, int bbox,
-                               const EvalAndConstructTask &task) {
-      const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(slot)) << 32) |
-                           static_cast<uint32_t>(bbox);
-      const auto inserted = task_index.emplace(key, tasks.size());
-      if (inserted.second) tasks.push_back(task);
-      return inserted.first->second;
-    };
-
-    for (const auto &p : pairs) {
-      if (p.slot < 0 || static_cast<size_t>(p.slot) >= chain.side1.size()) {
-        printf("ERROR! bad intersect pair slot=%d\n", p.slot);
-        std::exit(-1);
+    if constexpr (JSI_CAD_PRESERVE_PAIR_RELATION) {
+      jobs.reserve(pairs.size());
+      for (const auto &p : pairs) {
+        jobs.push_back({{p.slot, p.i}, {p.slot, p.j}});
       }
-      const auto &a1 = chain.side1[static_cast<size_t>(p.slot)];
-      const auto &a2 = chain.side2[static_cast<size_t>(p.slot)];
-      const int n1 = a1.naabb_width * a1.naabb_width;
-      const int n2 = a2.naabb_width * a2.naabb_width;
-      if (p.i < 0 || p.i >= n1 || p.j < 0 || p.j >= n2) {
-        printf("ERROR! bad intersect pair slot=%d i=%d j=%d\n", p.slot, p.i, p.j);
-        std::exit(-1);
+    } else {
+      std::vector<IntersectEndpoint> endpoints1;
+      std::vector<IntersectEndpoint> endpoints2;
+      auto add_unique = [](std::vector<IntersectEndpoint> &endpoints, int slot, int bbox) {
+        for (const auto &endpoint : endpoints) {
+          if (endpoint.slot == slot && endpoint.bbox == bbox) return;
+        }
+        endpoints.push_back({slot, bbox});
+      };
+      for (const auto &p : pairs) {
+        add_unique(endpoints1, p.slot, p.i);
+        add_unique(endpoints2, p.slot, p.j);
       }
-      const size_t side1_unit =
-          find_or_add_task(task_index1, tasks1, p.slot, p.i,
-                           make_intersect_refine_task(t1, a1, p.i, 1, global_nuv));
-      const size_t side2_unit =
-          find_or_add_task(task_index2, tasks2, p.slot, p.j,
-                           make_intersect_refine_task(t2, a2, p.j, 2, global_nuv));
-      jobs.push_back({side1_unit, side2_unit});
+      jobs.reserve(endpoints1.size() * endpoints2.size());
+      for (const auto &endpoint1 : endpoints1) {
+        for (const auto &endpoint2 : endpoints2) {
+          jobs.push_back({endpoint1, endpoint2});
+        }
+      }
     }
-
-    std::vector<AABBResult> unique_res1;
-    std::vector<AABBResult> unique_res2;
-    run_intersect_refine_batch(tasks1, unique_res1);
-    run_intersect_refine_batch(tasks2, unique_res2);
 
     IntersectChain next;
     next.side1.resize(jobs.size());
     next.side2.resize(jobs.size());
     for (size_t k = 0; k < jobs.size(); ++k) {
-      next.side1[k] = unique_res1[jobs[k].side1_unit];
-      next.side2[k] = unique_res2[jobs[k].side2_unit];
+      const auto &job = jobs[k];
+      if (job.side1.slot < 0 || job.side2.slot < 0 ||
+          static_cast<size_t>(job.side1.slot) >= chain.side1.size() ||
+          static_cast<size_t>(job.side2.slot) >= chain.side2.size()) {
+        printf("ERROR! bad intersect endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
+        std::exit(-1);
+      }
+      EvalAndConstructTask task1 = make_intersect_refine_task(
+          t1, chain.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
+      EvalAndConstructTask task2 = make_intersect_refine_task(
+          t2, chain.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
+      next.side1[k] = run_evaluation_and_construction_task(task1);
+      next.side2[k] = run_evaluation_and_construction_task(task2);
     }
     chain = std::move(next);
   }

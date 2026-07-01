@@ -15,15 +15,12 @@
 #include <omp.h>
 #endif
 
-#if defined(JSI_CAD_EXPLICIT_SVE) && defined(__ARM_FEATURE_SVE)
-#include <arm_sve.h>
-#define JSI_CAD_HAS_SVE 1
-#else
-#define JSI_CAD_HAS_SVE 0
-#endif
-
 #include "evaluation/evaluation.cuh"
 #include "jsi_cad.hpp"
+
+#ifndef JSI_CAD_PRESERVE_PAIR_RELATION
+#define JSI_CAD_PRESERVE_PAIR_RELATION 0
+#endif
 #include "common/profiler.hpp"
 
 static int global_nuv = 64;
@@ -202,23 +199,6 @@ static inline float center_distance_sq(size_t i, size_t j, const float *c1, cons
   return dx * dx + dy * dy + dz * dz;
 }
 
-#if JSI_CAD_HAS_SVE
-static inline svfloat32_t center_distance_sq_sve(size_t i, int j, const float *c1, const float *c2, svbool_t pg) {
-  const svint32_t x_idx = svindex_s32(j * 3, 3);
-  const svint32_t y_idx = svindex_s32(j * 3 + 1, 3);
-  const svint32_t z_idx = svindex_s32(j * 3 + 2, 3);
-  const svfloat32_t x1 = svdup_f32(c1[i * 3]);
-  const svfloat32_t y1 = svdup_f32(c1[i * 3 + 1]);
-  const svfloat32_t z1 = svdup_f32(c1[i * 3 + 2]);
-  const svfloat32_t dx = svsub_f32_x(pg, x1, svld1_gather_s32index_f32(pg, c2, x_idx));
-  const svfloat32_t dy = svsub_f32_x(pg, y1, svld1_gather_s32index_f32(pg, c2, y_idx));
-  const svfloat32_t dz = svsub_f32_x(pg, z1, svld1_gather_s32index_f32(pg, c2, z_idx));
-  svfloat32_t d2 = svmul_f32_x(pg, dx, dx);
-  d2 = svadd_f32_x(pg, d2, svmul_f32_x(pg, dy, dy));
-  return svadd_f32_x(pg, d2, svmul_f32_x(pg, dz, dz));
-}
-#endif
-
 static bool dist_pair_ref_less(const DistPairRef &a, const DistPairRef &b) {
   if (a.d2 != b.d2) return a.d2 < b.d2;
   if (a.slot != b.slot) return a.slot < b.slot;
@@ -273,35 +253,12 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
       const auto &a1 = ch.side1[static_cast<size_t>(slot)];
       const auto &a2 = ch.side2[static_cast<size_t>(slot)];
       const int n2 = a2.naabb_width * a2.naabb_width;
-#if JSI_CAD_HAS_SVE
-      const int vl = static_cast<int>(svcntw());
-      alignas(16) float d2_lanes[64];
-      alignas(16) int j_lanes[64];
-      for (int j = 0; j < n2; j += vl) {
-        const svbool_t pg = svwhilelt_b32(j, n2);
-        const svfloat32_t d2v =
-            center_distance_sq_sve(static_cast<size_t>(i), j, a1.d_aabb_center, a2.d_aabb_center, pg);
-        svbool_t hit = pg;
-        if (static_cast<int>(local.size()) >= limit) {
-          hit = svcmplt_f32(pg, d2v, svdup_f32(local.back().d2));
-          if (!svptest_any(pg, hit)) continue;
-        }
-        const int hits = static_cast<int>(svcntp_b32(pg, hit));
-        const svbool_t packed_pg = svwhilelt_b32(0, hits);
-        svst1_f32(packed_pg, d2_lanes, svcompact_f32(hit, d2v));
-        svst1_s32(packed_pg, j_lanes, svcompact_s32(hit, svindex_s32(j, 1)));
-        for (int h = 0; h < hits; ++h) {
-          dist_pair_top_push(local, limit, d2_lanes[h], slot, i, j_lanes[h]);
-        }
-      }
-#else
       for (int j = 0; j < n2; ++j) {
         dist_pair_top_push(local, limit,
                            center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
                                               a2.d_aabb_center),
                            slot, i, j);
       }
-#endif
     }
   }
   std::vector<DistPairRef> best;
@@ -375,19 +332,56 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
     if (round == max_layers) break;
     if (round == 1) global_nuv = next_nuv;
 
+    struct DistEndpoint {
+      int slot;
+      int bbox;
+    };
+    struct DistRefineJob {
+      DistEndpoint side1;
+      DistEndpoint side2;
+    };
+    std::vector<DistRefineJob> jobs;
+    if constexpr (JSI_CAD_PRESERVE_PAIR_RELATION) {
+      jobs.reserve(pairs.size());
+      for (const auto &p : pairs) {
+        jobs.push_back({{p.slot, p.i}, {p.slot, p.j}});
+      }
+    } else {
+      std::vector<DistEndpoint> endpoints1;
+      std::vector<DistEndpoint> endpoints2;
+      auto add_unique = [](std::vector<DistEndpoint> &endpoints, int slot, int bbox) {
+        for (const auto &endpoint : endpoints) {
+          if (endpoint.slot == slot && endpoint.bbox == bbox) return;
+        }
+        endpoints.push_back({slot, bbox});
+      };
+      for (const auto &p : pairs) {
+        add_unique(endpoints1, p.slot, p.i);
+        add_unique(endpoints2, p.slot, p.j);
+      }
+      jobs.reserve(endpoints1.size() * endpoints2.size());
+      for (const auto &endpoint1 : endpoints1) {
+        for (const auto &endpoint2 : endpoints2) {
+          jobs.push_back({endpoint1, endpoint2});
+        }
+      }
+    }
+
     DistChain next;
-    next.side1.resize(pairs.size());
-    next.side2.resize(pairs.size());
-    for (size_t k = 0; k < pairs.size(); ++k) {
-      const auto &p = pairs[k];
-      if (p.slot < 0 || static_cast<size_t>(p.slot) >= ch.side1.size()) {
-        printf("ERROR! bad distance pair slot=%d\n", p.slot);
+    next.side1.resize(jobs.size());
+    next.side2.resize(jobs.size());
+    for (size_t k = 0; k < jobs.size(); ++k) {
+      const auto &job = jobs[k];
+      if (job.side1.slot < 0 || job.side2.slot < 0 ||
+          static_cast<size_t>(job.side1.slot) >= ch.side1.size() ||
+          static_cast<size_t>(job.side2.slot) >= ch.side2.size()) {
+        printf("ERROR! bad distance endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
         std::exit(-1);
       }
-      EvalAndConstructTask tside1 =
-          make_dist_refine_task(t1, ch.side1[static_cast<size_t>(p.slot)], p.i, 1, global_nuv);
-      EvalAndConstructTask tside2 =
-          make_dist_refine_task(t2, ch.side2[static_cast<size_t>(p.slot)], p.j, 2, global_nuv);
+      EvalAndConstructTask tside1 = make_dist_refine_task(
+          t1, ch.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
+      EvalAndConstructTask tside2 = make_dist_refine_task(
+          t2, ch.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
       next.side1[k] = run_evaluation_and_construction_task(tside1, cuda_streams[current_stream_id]);
       current_stream_id = (current_stream_id + 1) % num_cuda_streams;
       next.side2[k] = run_evaluation_and_construction_task(tside2, cuda_streams[current_stream_id]);

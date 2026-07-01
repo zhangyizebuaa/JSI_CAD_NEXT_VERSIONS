@@ -13,17 +13,14 @@
 #include <omp.h>
 #endif
 
-#if defined(JSI_CAD_EXPLICIT_SVE) && defined(__ARM_FEATURE_SVE)
-#include <arm_sve.h>
-#define JSI_CAD_HAS_SVE 1
-#else
-#define JSI_CAD_HAS_SVE 0
-#endif
-
 #include "common/common.cuh"
 #include "common/profiler.hpp"
 #include "evaluation/evaluation.cuh"
 #include "jsi_cad.hpp"
+
+#ifndef JSI_CAD_PRESERVE_PAIR_RELATION
+#define JSI_CAD_PRESERVE_PAIR_RELATION 0
+#endif
 
 static int global_nuv = 16;
 
@@ -45,41 +42,6 @@ static inline bool AabbOverlap(int i, int j, const float *center1, const float *
          std::fabs(y_center_1 - y_center_2) < (y_half_size_1 + y_half_size_2) &&
          std::fabs(z_center_1 - z_center_2) < (z_half_size_1 + z_half_size_2);
 }
-
-#if JSI_CAD_HAS_SVE
-static inline int AabbOverlapHitJsSVE(int i, int j, int j_end, const float *center1, const float *radius1,
-                                      const float *center2, const float *radius2, int *hit_js) {
-  const svbool_t pg = svwhilelt_b32(j, j_end);
-  const svfloat32_t cx1 = svdup_f32(center1[i * 3]);
-  const svfloat32_t cy1 = svdup_f32(center1[i * 3 + 1]);
-  const svfloat32_t cz1 = svdup_f32(center1[i * 3 + 2]);
-  const svfloat32_t rx1 = svdup_f32(radius1[i * 3]);
-  const svfloat32_t ry1 = svdup_f32(radius1[i * 3 + 1]);
-  const svfloat32_t rz1 = svdup_f32(radius1[i * 3 + 2]);
-
-  const svfloat32x3_t c2 = svld3_f32(pg, center2 + static_cast<size_t>(j) * 3);
-  const svfloat32x3_t r2 = svld3_f32(pg, radius2 + static_cast<size_t>(j) * 3);
-  const svfloat32_t cx2 = svget3_f32(c2, 0);
-  const svfloat32_t cy2 = svget3_f32(c2, 1);
-  const svfloat32_t cz2 = svget3_f32(c2, 2);
-  const svfloat32_t rx2 = svget3_f32(r2, 0);
-  const svfloat32_t ry2 = svget3_f32(r2, 1);
-  const svfloat32_t rz2 = svget3_f32(r2, 2);
-
-  svbool_t hit =
-      svcmplt_f32(pg, svabs_f32_x(pg, svsub_f32_x(pg, cx1, cx2)), svadd_f32_x(pg, rx1, rx2));
-  hit = svand_b_z(pg, hit,
-                  svcmplt_f32(pg, svabs_f32_x(pg, svsub_f32_x(pg, cy1, cy2)),
-                              svadd_f32_x(pg, ry1, ry2)));
-  hit = svand_b_z(pg, hit,
-                  svcmplt_f32(pg, svabs_f32_x(pg, svsub_f32_x(pg, cz1, cz2)),
-                              svadd_f32_x(pg, rz1, rz2)));
-  if (!svptest_any(pg, hit)) return 0;
-  const int hits = static_cast<int>(svcntp_b32(pg, hit));
-  svst1_s32(svwhilelt_b32(0, hits), hit_js, svcompact_s32(hit, svindex_s32(j, 1)));
-  return hits;
-}
-#endif
 
 static void gather_idx_kernel_host(int *data_out, size_t size, const int *pos, const int *pre) {
   for (size_t i = 0; i < size; ++i) {
@@ -235,25 +197,11 @@ static int intersect_collect_pairs(const IntersectChain &ch, std::vector<Interse
     const int n1 = a1.naabb_width * a1.naabb_width;
     const int n2 = a2.naabb_width * a2.naabb_width;
     for (int i = 0; i < n1; ++i) {
-#if JSI_CAD_HAS_SVE
-      const int vl = static_cast<int>(svcntw());
-      int hit_js[64];
-      for (int j = 0; j < n2; j += vl) {
-        const int j_end = std::min(j + vl, n2);
-        const int hits =
-            AabbOverlapHitJsSVE(i, j, j_end, a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius,
-                                hit_js);
-        for (int h = 0; h < hits; ++h) {
-          local_pairs.push_back({static_cast<int>(slot), i, hit_js[h]});
-        }
-      }
-#else
       for (int j = 0; j < n2; ++j) {
         if (AabbOverlap(i, j, a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius)) {
           local_pairs.push_back({static_cast<int>(slot), i, j});
         }
       }
-#endif
     }
   }
 #ifdef _OPENMP
@@ -285,17 +233,6 @@ static EvalAndConstructTask make_intersect_refine_task(const EvalAndConstructTas
   return t;
 }
 
-static void run_intersect_refine_batch(const std::vector<EvalAndConstructTask> &tasks, std::vector<AABBResult> &out) {
-  out.resize(tasks.size());
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) if (tasks.size() > 4)
-#endif
-  for (size_t k = 0; k < tasks.size(); ++k) {
-    EvalAndConstructTask t = tasks[k];
-    out[k] = run_evaluation_and_construction_task(t);
-  }
-}
-
 void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
   CAD_PROFILE_SCOPE("intersection");
   IntersectChain chain;
@@ -313,22 +250,59 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
     if (npairs == 0) break;
     if (npairs > 512 && global_nuv > 4) global_nuv /= 2;
 
+    struct IntersectEndpoint {
+      int slot;
+      int bbox;
+    };
+    struct IntersectRefineJob {
+      IntersectEndpoint side1;
+      IntersectEndpoint side2;
+    };
+    std::vector<IntersectRefineJob> jobs;
+    if constexpr (JSI_CAD_PRESERVE_PAIR_RELATION) {
+      jobs.reserve(pairs.size());
+      for (const auto &p : pairs) {
+        jobs.push_back({{p.slot, p.i}, {p.slot, p.j}});
+      }
+    } else {
+      std::vector<IntersectEndpoint> endpoints1;
+      std::vector<IntersectEndpoint> endpoints2;
+      auto add_unique = [](std::vector<IntersectEndpoint> &endpoints, int slot, int bbox) {
+        for (const auto &endpoint : endpoints) {
+          if (endpoint.slot == slot && endpoint.bbox == bbox) return;
+        }
+        endpoints.push_back({slot, bbox});
+      };
+      for (const auto &p : pairs) {
+        add_unique(endpoints1, p.slot, p.i);
+        add_unique(endpoints2, p.slot, p.j);
+      }
+      jobs.reserve(endpoints1.size() * endpoints2.size());
+      for (const auto &endpoint1 : endpoints1) {
+        for (const auto &endpoint2 : endpoints2) {
+          jobs.push_back({endpoint1, endpoint2});
+        }
+      }
+    }
+
     IntersectChain next;
-    std::vector<EvalAndConstructTask> tasks1;
-    std::vector<EvalAndConstructTask> tasks2;
-    tasks1.reserve(pairs.size());
-    tasks2.reserve(pairs.size());
-    for (size_t k = 0; k < pairs.size(); ++k) {
-      const auto &p = pairs[k];
-      if (p.slot < 0 || static_cast<size_t>(p.slot) >= chain.side1.size()) {
-        printf("ERROR! bad intersect pair slot=%d\n", p.slot);
+    next.side1.resize(jobs.size());
+    next.side2.resize(jobs.size());
+    for (size_t k = 0; k < jobs.size(); ++k) {
+      const auto &job = jobs[k];
+      if (job.side1.slot < 0 || job.side2.slot < 0 ||
+          static_cast<size_t>(job.side1.slot) >= chain.side1.size() ||
+          static_cast<size_t>(job.side2.slot) >= chain.side2.size()) {
+        printf("ERROR! bad intersect endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
         std::exit(-1);
       }
-      tasks1.push_back(make_intersect_refine_task(t1, chain.side1[static_cast<size_t>(p.slot)], p.i, 1, global_nuv));
-      tasks2.push_back(make_intersect_refine_task(t2, chain.side2[static_cast<size_t>(p.slot)], p.j, 2, global_nuv));
+      EvalAndConstructTask task1 = make_intersect_refine_task(
+          t1, chain.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
+      EvalAndConstructTask task2 = make_intersect_refine_task(
+          t2, chain.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
+      next.side1[k] = run_evaluation_and_construction_task(task1);
+      next.side2[k] = run_evaluation_and_construction_task(task2);
     }
-    run_intersect_refine_batch(tasks1, next.side1);
-    run_intersect_refine_batch(tasks2, next.side2);
     chain = std::move(next);
   }
 }
