@@ -12,3 +12,14 @@ This repository stores reproducible JSI_CAD_NEXT source-code versions in separat
 | `JSI_CAD_NEXT_VERSION5/` | Historical Version 7: reuse duplicate refinement regions |
 
 Build outputs, IDE files, and performance reports are not tracked.
+
+Run a selected case inside any version directory:
+
+```bash
+make run_dist CASE=1
+make run_intersect CASE=2
+make run_all_cases
+```
+
+Distance uses 51 OpenMP threads by default and intersection uses 55. Override them with
+`DIST_THREADS=<n>` or `INTER_THREADS=<n>`.

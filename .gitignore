@@ -1,3 +1,4 @@
 **/build/
+**/build.clean.*/
 **/.idea/
 **/perf_*.txt

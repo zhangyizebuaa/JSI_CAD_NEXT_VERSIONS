@@ -1,6 +1,11 @@
 #include <iostream>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "jsi_cad.hpp"
 #include "nurbs_data.hpp"
@@ -18,6 +23,13 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
+
+#ifdef _OPENMP
+    if (std::getenv("OMP_NUM_THREADS") == nullptr) {
+        omp_set_num_threads(55);
+    }
+    std::cout << "OpenMP threads: " << omp_get_max_threads() << std::endl;
+#endif
 
     init_cad();
 
