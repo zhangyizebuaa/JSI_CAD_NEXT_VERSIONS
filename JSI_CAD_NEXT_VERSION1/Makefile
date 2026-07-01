@@ -1,7 +1,10 @@
 CXX             ?= g++
 CASE            ?= 1
+THREADS         ?=
 DIST_THREADS    ?= 51
 INTER_THREADS   ?= 55
+DIST_RUN_THREADS = $(if $(strip $(THREADS)),$(THREADS),$(DIST_THREADS))
+INTER_RUN_THREADS = $(if $(strip $(THREADS)),$(THREADS),$(INTER_THREADS))
 CXXFLAGS        ?= -O3 -std=c++17 -fopenmp -I include/ -I src/
 LDFLAGS         ?=
 USE_ASCEND_ACL  ?= 0
@@ -59,19 +62,19 @@ build/test_dist: lib data examples/distance_analysis_example.cu include/nurbs_da
 	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o -o build/test_dist $(LDFLAGS)
 
 run_dist: build/test_dist
-	OMP_NUM_THREADS=$(DIST_THREADS) ./build/test_dist $(CASE)
+	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist $(CASE)
 
 build/test_intersect: lib data examples/intersection_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/intersection_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o -o build/test_intersect $(LDFLAGS)
 
 run_intersect: build/test_intersect
-	OMP_NUM_THREADS=$(INTER_THREADS) ./build/test_intersect $(CASE)
+	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect $(CASE)
 
 run_all_cases: build/test_dist build/test_intersect
-	OMP_NUM_THREADS=$(DIST_THREADS) ./build/test_dist 1
-	OMP_NUM_THREADS=$(DIST_THREADS) ./build/test_dist 2
-	OMP_NUM_THREADS=$(INTER_THREADS) ./build/test_intersect 1
-	OMP_NUM_THREADS=$(INTER_THREADS) ./build/test_intersect 2
+	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 1
+	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 2
+	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 1
+	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 2
 
 build/test_eval: lib data examples/evaluation_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/evaluation_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o -o build/test_eval $(LDFLAGS)

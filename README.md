@@ -21,5 +21,5 @@ make run_intersect CASE=2
 make run_all_cases
 ```
 
-Distance uses 51 OpenMP threads by default and intersection uses 55. Override them with
-`DIST_THREADS=<n>` or `INTER_THREADS=<n>`.
+Distance uses 51 OpenMP threads by default and intersection uses 55. Override either command with
+`THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
