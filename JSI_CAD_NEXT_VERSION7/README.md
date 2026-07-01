@@ -1,3 +1,0 @@
-- `make run_eval` 测试曲面求值
-- `make run_intersect` 测试求交
-- `make run_dist` 测试距离分析
