@@ -1,4 +1,5 @@
 CXX             ?= g++
+CASE            ?= 1
 CXXFLAGS        ?= -O3 -std=c++17 -fopenmp -DJSI_CAD_PRESERVE_PAIR_RELATION=1 -I include/ -I src/
 SVE_CXXFLAGS    ?= -mcpu=native -DJSI_CAD_EXPLICIT_SVE
 LDFLAGS         ?=
@@ -57,13 +58,19 @@ build/test_dist: lib data examples/distance_analysis_example.cu include/nurbs_da
 	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o -o build/test_dist $(LDFLAGS)
 
 run_dist: build/test_dist
-	./build/test_dist
+	./build/test_dist $(CASE)
 
 build/test_intersect: lib data examples/intersection_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/intersection_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o -o build/test_intersect $(LDFLAGS)
 
 run_intersect: build/test_intersect
-	./build/test_intersect
+	./build/test_intersect $(CASE)
+
+run_all_cases: build/test_dist build/test_intersect
+	./build/test_dist 1
+	./build/test_dist 2
+	./build/test_intersect 1
+	./build/test_intersect 2
 
 build/test_eval: lib data examples/evaluation_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/evaluation_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o -o build/test_eval $(LDFLAGS)

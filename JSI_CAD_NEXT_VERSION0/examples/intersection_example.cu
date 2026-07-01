@@ -6,11 +6,24 @@
 #include "nurbs_data.hpp"
 #include "common/common.cuh"
 
-int main() {
+int main(int argc, char **argv) {
+    int case_id = 1;
+    if (argc > 1) {
+        if (std::strcmp(argv[1], "1") == 0 || std::strcmp(argv[1], "case1") == 0) {
+            case_id = 1;
+        } else if (std::strcmp(argv[1], "2") == 0 || std::strcmp(argv[1], "case2") == 0) {
+            case_id = 2;
+        } else {
+            std::cerr << "Usage: " << argv[0] << " [1|2|case1|case2]" << std::endl;
+            return 2;
+        }
+    }
+
     init_cad();
 
-    auto& nurbs_obj1 = inter_case1_obj1;
-    auto& nurbs_obj2 = inter_case1_obj2;
+    auto& nurbs_obj1 = case_id == 1 ? inter_case1_obj1 : inter_case2_obj1;
+    auto& nurbs_obj2 = case_id == 1 ? inter_case1_obj2 : inter_case2_obj2;
+    std::cout << "Running intersection case " << case_id << std::endl;
 
     int *d_ivec_1;
     float *d_data_1;
