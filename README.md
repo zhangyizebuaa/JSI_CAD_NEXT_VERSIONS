@@ -10,6 +10,7 @@ This repository stores reproducible JSI_CAD_NEXT source-code versions in separat
 | `JSI_CAD_NEXT_VERSION3/` | Historical Version 4: add SVE |
 | `JSI_CAD_NEXT_VERSION4/` | Historical Version 5: batch intersection refinement tasks |
 | `JSI_CAD_NEXT_VERSION5/` | Historical Version 7: reuse duplicate refinement regions |
+| `JSI_CAD_NEXT_VERSION6/` | Experimental Compute_K padding for intersection AABBs |
 
 Build outputs, IDE files, and performance reports are not tracked.
 
@@ -23,3 +24,10 @@ make run_all_cases
 
 Distance uses 51 OpenMP threads by default and intersection uses 55. Override either command with
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
+
+Version 6 compares second-derivative-aware intersection with the Version 5 behavior:
+
+```bash
+make run_intersect CASE=1 USE_COMPUTE_K=1
+make run_intersect CASE=1 USE_COMPUTE_K=0
+```
