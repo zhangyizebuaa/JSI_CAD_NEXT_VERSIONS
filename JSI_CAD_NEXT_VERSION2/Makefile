@@ -3,6 +3,7 @@ CASE            ?= 1
 THREADS         ?=
 DIST_THREADS    ?= 51
 INTER_THREADS   ?= 55
+USE_COMPUTE_K   ?= 1
 DIST_RUN_THREADS = $(if $(strip $(THREADS)),$(THREADS),$(DIST_THREADS))
 INTER_RUN_THREADS = $(if $(strip $(THREADS)),$(THREADS),$(INTER_THREADS))
 CXXFLAGS        ?= -O3 -std=c++17 -fopenmp -DJSI_CAD_PRESERVE_PAIR_RELATION=1 -I include/ -I src/
@@ -74,15 +75,15 @@ build/test_intersect: lib data examples/intersection_example.cu include/nurbs_da
 	$(CXX) $(CXXFLAGS) -x c++ examples/intersection_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o -o build/test_intersect $(LDFLAGS)
 
 run_intersect: build/test_intersect
-	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect $(CASE)
+	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect $(CASE)
 
 run_all_cases: build/test_dist build/test_intersect
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 1
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 2
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 3
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 4
-	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 1
-	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 2
+	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 1
+	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 2
 
 build/test_eval: lib data examples/evaluation_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/evaluation_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o -o build/test_eval $(LDFLAGS)

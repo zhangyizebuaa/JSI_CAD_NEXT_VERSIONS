@@ -9,3 +9,8 @@ Based on Version 0. This stage combines the changes originally introduced in his
 - Candidate collection scans the Cartesian product of the independently retained side1 and side2 regions.
 - Each retained region is refined and stored once; pair correspondence is not preserved yet.
 - SVE, batched intersection refinement, and duplicate-region reuse are not included.
+
+Common correctness update:
+
+- Intersection uses `compute_K` second-derivative bounds to conservatively pad AABBs.
+- Padding is enabled by default and can be disabled with `USE_COMPUTE_K=0`.

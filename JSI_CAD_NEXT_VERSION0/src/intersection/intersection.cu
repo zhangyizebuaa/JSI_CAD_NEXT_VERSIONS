@@ -15,6 +15,14 @@
 #include "jsi_cad.hpp"
 
 static int global_nuv = 16;
+static int initial_k_prints = 0;
+static float initial_u_span[3] = {1.0f, 1.0f, 1.0f};
+static float initial_v_span[3] = {1.0f, 1.0f, 1.0f};
+
+static bool use_compute_k_padding() {
+  const char *value = std::getenv("CAD_INTERSECT_USE_K");
+  return value == nullptr || std::strcmp(value, "0") != 0;
+}
 
 static inline bool AabbOverlap(int i, int j, const float *center1, const float *radius1, const float *center2,
                                const float *radius2) {
@@ -41,7 +49,8 @@ static void gather_idx_kernel_host(int *data_out, size_t size, const int *pos, c
   }
 }
 
-static void construct_aabbs_host(int un, int vn, const float *points, float *center, float *radius, float *diagonal) {
+static void construct_aabbs_host(int un, int vn, const float *points, float curvature_padding, float *center,
+                                 float *radius, float *diagonal) {
   for (int i = 0; i < un - 1; ++i) {
     for (int j = 0; j < vn - 1; ++j) {
       int id = i * (vn - 1) + j;
@@ -73,9 +82,12 @@ static void construct_aabbs_host(int un, int vn, const float *points, float *cen
       center[id * 3] = (xmin + xmax) / 2.0f;
       center[id * 3 + 1] = (ymin + ymax) / 2.0f;
       center[id * 3 + 2] = (zmin + zmax) / 2.0f;
-      radius[id * 3] = x_span / 2.0f;
-      radius[id * 3 + 1] = y_span / 2.0f;
-      radius[id * 3 + 2] = z_span / 2.0f;
+      radius[id * 3] = x_span / 2.0f + curvature_padding;
+      radius[id * 3 + 1] = y_span / 2.0f + curvature_padding;
+      radius[id * 3 + 2] = z_span / 2.0f + curvature_padding;
+      x_span += 2.0f * curvature_padding;
+      y_span += 2.0f * curvature_padding;
+      z_span += 2.0f * curvature_padding;
       diagonal[id] = std::sqrt(x_span * x_span + y_span * y_span + z_span * z_span);
     }
   }
@@ -117,7 +129,26 @@ static AABBResult run_evaluation_and_construction_task(EvalAndConstructTask &tas
   float *radius = static_cast<float *>(allocate_from_workspace(3 * naabb_width * naabb_width * sizeof(float)));
   float *diagonal = static_cast<float *>(allocate_from_workspace(naabb_width * naabb_width * sizeof(float)));
   EG_spline2dDeriv_irrational(task.d_ivec, task.d_data, ustep, vstep, task.ustart, task.vstart, nuv, results);
-  construct_aabbs_host(nuv, nuv, results, center, radius, diagonal);
+  float curvature_padding = 0.0f;
+  if (use_compute_k_padding()) {
+    CAD_PROFILE_SCOPE("compute_K_intersection");
+    std::vector<float> second_deriv_max(static_cast<size_t>(nuv) * nuv * 3);
+    float raw_k = 0.0f;
+    compute_K(results, second_deriv_max.data(), &raw_k, nuv);
+    const int side = (task.eval_task_side == 2) ? 2 : 1;
+    const float u_scale = std::fabs(task.ustop - task.ustart) / initial_u_span[side];
+    const float v_scale = std::fabs(task.vstop - task.vstart) / initial_v_span[side];
+    const float patch_scale = std::max(u_scale, v_scale);
+    curvature_padding = raw_k * patch_scale * patch_scale;
+    if (!std::isfinite(curvature_padding) || curvature_padding < 0.0f) curvature_padding = 0.0f;
+    if (initial_k_prints < 2) {
+      printf("Compute_K initial side%d raw=%g scale=%g padding=%g\n", task.eval_task_side, raw_k, patch_scale,
+             curvature_padding);
+      std::fflush(stdout);
+      ++initial_k_prints;
+    }
+  }
+  construct_aabbs_host(nuv, nuv, results, curvature_padding, center, radius, diagonal);
   AABBResult res;
   res.naabb_width = naabb_width;
   res.d_aabb_center = center;
@@ -161,6 +192,13 @@ static std::pair<int, int> find_aabb(int id, std::vector<AABBResult> &aabbs) {
 
 void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
   CAD_PROFILE_SCOPE("intersection");
+  initial_k_prints = 0;
+  initial_u_span[1] = std::max(std::fabs(t1.ustop - t1.ustart), 1.0e-12f);
+  initial_v_span[1] = std::max(std::fabs(t1.vstop - t1.vstart), 1.0e-12f);
+  initial_u_span[2] = std::max(std::fabs(t2.ustop - t2.ustart), 1.0e-12f);
+  initial_v_span[2] = std::max(std::fabs(t2.vstop - t2.vstart), 1.0e-12f);
+  printf("Compute_K AABB padding: %s\n", use_compute_k_padding() ? "on" : "off");
+  std::fflush(stdout);
   std::queue<EvalAndConstructTask> eval_queue;
   std::vector<AABBResult> aabb_1_queue;
   std::vector<AABBResult> aabb_2_queue;
