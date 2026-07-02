@@ -23,7 +23,7 @@
 #endif
 #include "common/profiler.hpp"
 
-static int global_nuv = 64;
+static int global_nuv = 128;
 static int next_nuv = 16;
 static int k_of_topk = 8;
 static int max_layers = 4;

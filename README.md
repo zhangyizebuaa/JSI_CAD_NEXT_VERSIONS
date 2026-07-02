@@ -29,6 +29,8 @@ distance cases followed by both intersection cases.
 
 Distance uses 51 OpenMP threads by default and intersection uses 55. Override either command with
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
+Distance uses an initial sampling width of `nuv=128` in every version; later refinement rounds
+retain the existing `nuv=16` setting.
 
 All versions now include the same second-derivative-aware intersection AABB padding so that
 cross-version performance comparisons use the same conservative bound. It is enabled by default

@@ -32,7 +32,7 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
 
 void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2);
 
-static int default_global_dist_nuv = 64;
+static int default_global_dist_nuv = 128;
 static int default_global_intersect_nuv = 16;
 
 inline void checkError(cudaError_t error, std::string msg) {
