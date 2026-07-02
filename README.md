@@ -18,9 +18,14 @@ Run a selected case inside any version directory:
 
 ```bash
 make run_dist CASE=1
+make run_dist CASE=3
 make run_intersect CASE=2
 make run_all_cases
 ```
+
+Distance cases 1 and 2 are the original inputs. Case 3 is the hard-parallel input and case 4 is the
+hard-wave input. Intersection currently provides cases 1 and 2. `run_all_cases` runs all four
+distance cases followed by both intersection cases.
 
 Distance uses 51 OpenMP threads by default and intersection uses 55. Override either command with
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.

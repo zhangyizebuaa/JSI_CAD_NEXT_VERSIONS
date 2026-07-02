@@ -13,6 +13,10 @@ extern struct NurbsFace dist_case1_obj1;
 extern struct NurbsFace dist_case1_obj2;
 extern struct NurbsFace dist_case2_obj1;
 extern struct NurbsFace dist_case2_obj2;
+extern struct NurbsFace dist_case_hard_parallel_obj1;
+extern struct NurbsFace dist_case_hard_parallel_obj2;
+extern struct NurbsFace dist_hard_wave_obj1;
+extern struct NurbsFace dist_hard_wave_obj2;
 
 extern struct NurbsFace inter_case1_obj1;
 extern struct NurbsFace inter_case1_obj2;

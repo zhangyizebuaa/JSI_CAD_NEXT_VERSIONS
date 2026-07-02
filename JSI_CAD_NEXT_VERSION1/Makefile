@@ -39,6 +39,12 @@ build/data_d1.o: include/nurbs_data.hpp examples/data/dist_case1.cu | prepare
 build/data_d2.o: include/nurbs_data.hpp examples/data/dist_case2.cu | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/dist_case2.cu -o build/data_d2.o
 
+build/data_d3.o: include/nurbs_data.hpp examples/data/dist_case3.cu | prepare
+	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/dist_case3.cu -o build/data_d3.o
+
+build/data_d4.o: include/nurbs_data.hpp examples/data/dist_case4.cu | prepare
+	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/dist_case4.cu -o build/data_d4.o
+
 build/common.o: src/common/common.cu src/common/common.cuh | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c src/common/common.cu -o build/common.o
 
@@ -56,10 +62,10 @@ build/ascend_hotspots.o: src/ascend/ascend_hotspots.cpp src/ascend/ascend_hotspo
 
 lib: build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o
 
-data: build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_d1.o build/data_d2.o
+data: build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_d1.o build/data_d2.o build/data_d3.o build/data_d4.o
 
 build/test_dist: lib data examples/distance_analysis_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
-	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o -o build/test_dist $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o build/data_d3.o build/data_d4.o -o build/test_dist $(LDFLAGS)
 
 run_dist: build/test_dist
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist $(CASE)
@@ -73,6 +79,8 @@ run_intersect: build/test_intersect
 run_all_cases: build/test_dist build/test_intersect
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 1
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 2
+	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 3
+	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 4
 	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 1
 	OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 2
 

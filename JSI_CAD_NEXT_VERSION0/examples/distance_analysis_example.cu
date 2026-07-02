@@ -18,8 +18,12 @@ int main(int argc, char **argv) {
             case_id = 1;
         } else if (std::strcmp(argv[1], "2") == 0 || std::strcmp(argv[1], "case2") == 0) {
             case_id = 2;
+        } else if (std::strcmp(argv[1], "3") == 0 || std::strcmp(argv[1], "case3") == 0) {
+            case_id = 3;
+        } else if (std::strcmp(argv[1], "4") == 0 || std::strcmp(argv[1], "case4") == 0) {
+            case_id = 4;
         } else {
-            std::cerr << "Usage: " << argv[0] << " [1|2|case1|case2]" << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [1|2|3|4|case1|case2|case3|case4]" << std::endl;
             return 2;
         }
     }
@@ -33,8 +37,10 @@ int main(int argc, char **argv) {
 
     init_cad();
 
-    auto& nurbs_obj1 = case_id == 1 ? dist_case1_obj1 : dist_case2_obj1;
-    auto& nurbs_obj2 = case_id == 1 ? dist_case1_obj2 : dist_case2_obj2;
+    NurbsFace *cases1[] = {&dist_case1_obj1, &dist_case2_obj1, &dist_case_hard_parallel_obj1, &dist_hard_wave_obj1};
+    NurbsFace *cases2[] = {&dist_case1_obj2, &dist_case2_obj2, &dist_case_hard_parallel_obj2, &dist_hard_wave_obj2};
+    auto& nurbs_obj1 = *cases1[case_id - 1];
+    auto& nurbs_obj2 = *cases2[case_id - 1];
     std::cout << "Running distance case " << case_id << std::endl;
 
     int *d_ivec_1;
