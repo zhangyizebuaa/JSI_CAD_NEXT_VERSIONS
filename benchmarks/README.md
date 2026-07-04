@@ -13,7 +13,7 @@ bash benchmarks/build_opencascade_compare.sh
 ./build/opencascade/opencascade_compare intersection 1 5
 ```
 
-The default paths use `JSI_CAD_NEXT_VERSION5` and the locally built
+The default paths use `JSI_CAD_NEXT_VERSION7` and the locally built
 OpenCASCADE 8.0.0 tree. Override them with `VERSION_DIR` and `OCCT_BUILD`.
 
 The distance benchmark runs OpenCASCADE's exact surface extrema query. The
