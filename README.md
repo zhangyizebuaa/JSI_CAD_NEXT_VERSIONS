@@ -9,9 +9,7 @@ This repository stores reproducible JSI_CAD_NEXT source-code versions in separat
 | `JSI_CAD_NEXT_VERSION2/` | Historical Version 2: preserve candidate-pair correspondence |
 | `JSI_CAD_NEXT_VERSION3/` | Historical Version 4: add SVE |
 | `JSI_CAD_NEXT_VERSION4/` | Historical Version 5: batch intersection refinement tasks |
-| `JSI_CAD_NEXT_VERSION5/` | Historical Version 7: reuse duplicate refinement regions |
-| `JSI_CAD_NEXT_VERSION6/` | Original snapshot of the Compute_K intersection experiment |
-| `JSI_CAD_NEXT_VERSION7/` | Final consolidated artifact snapshot |
+| `JSI_CAD_NEXT_VERSION5/` | Final version: reuse duplicate refinement regions |
 
 Build outputs, IDE files, and performance reports are not tracked.
 
@@ -42,4 +40,4 @@ make run_intersect CASE=1 USE_COMPUTE_K=1
 make run_intersect CASE=1 USE_COMPUTE_K=0
 ```
 
-For paper reproduction, use `JSI_CAD_NEXT_VERSION7/` as the final implementation.
+For paper reproduction, use `JSI_CAD_NEXT_VERSION5/` as the final implementation.

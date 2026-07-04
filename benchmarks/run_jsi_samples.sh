@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version_dir="${VERSION_DIR:-$repo_dir/JSI_CAD_NEXT_VERSION7}"
+version_dir="${VERSION_DIR:-$repo_dir/JSI_CAD_NEXT_VERSION5}"
 repeats="${REPEATS:-5}"
 distance_case="${DISTANCE_CASE:-1}"
 intersection_case="${INTERSECTION_CASE:-1}"

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version_dir="${VERSION_DIR:-$repo_dir/JSI_CAD_NEXT_VERSION7}"
+version_dir="${VERSION_DIR:-$repo_dir/JSI_CAD_NEXT_VERSION5}"
 occt_build="${OCCT_BUILD:-/home/zyz/src/OCCT-8.0.0-build}"
 output_dir="$repo_dir/build/opencascade"
 
