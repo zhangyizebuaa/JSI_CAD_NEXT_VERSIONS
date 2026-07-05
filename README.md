@@ -31,6 +31,10 @@ Distance uses 51 OpenMP threads by default and intersection uses 55. Override ei
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
 Distance uses an initial sampling width of `nuv=512` in every version; later refinement rounds
 retain the existing `nuv=16` setting.
+The historical serial Version 0 materializes the complete first-round distance matrix and therefore
+cannot execute the `nuv=512` workload inside the 4 GiB workspace. It remains a source-level
+reference; the paper's measured distance ablation starts from Version 1, whose bounded top-k
+collection avoids that allocation.
 
 All versions now include the same second-derivative-aware intersection AABB padding so that
 cross-version performance comparisons use the same conservative bound. It is enabled by default
