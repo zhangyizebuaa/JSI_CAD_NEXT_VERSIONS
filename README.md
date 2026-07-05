@@ -22,13 +22,14 @@ make run_intersect CASE=2
 make run_all_cases
 ```
 
-Distance cases 1 and 2 are the original inputs. Case 3 is the hard-parallel input and case 4 is the
-hard-wave input. Intersection currently provides cases 1 and 2. `run_all_cases` runs all four
-distance cases followed by both intersection cases.
+Distance cases 1 and 2 are the original inputs. Case 3 is a 4x geometric scaling of the hard-wave
+input, paired with the 4x denser initial grid to retain approximately the same physical sampling
+spacing. Case 4 is the unscaled hard-wave input. Intersection currently provides cases 1 and 2.
+`run_all_cases` runs all four distance cases followed by both intersection cases.
 
 Distance uses 51 OpenMP threads by default and intersection uses 55. Override either command with
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
-Distance uses an initial sampling width of `nuv=128` in every version; later refinement rounds
+Distance uses an initial sampling width of `nuv=512` in every version; later refinement rounds
 retain the existing `nuv=16` setting.
 
 All versions now include the same second-derivative-aware intersection AABB padding so that

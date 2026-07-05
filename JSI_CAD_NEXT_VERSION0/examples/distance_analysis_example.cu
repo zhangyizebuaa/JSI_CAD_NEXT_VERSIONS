@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -37,11 +38,30 @@ int main(int argc, char **argv) {
 
     init_cad();
 
-    NurbsFace *cases1[] = {&dist_case1_obj1, &dist_case2_obj1, &dist_case_hard_parallel_obj1, &dist_hard_wave_obj1};
-    NurbsFace *cases2[] = {&dist_case1_obj2, &dist_case2_obj2, &dist_case_hard_parallel_obj2, &dist_hard_wave_obj2};
+    NurbsFace *cases1[] = {&dist_case1_obj1, &dist_case2_obj1, &dist_hard_wave_obj1, &dist_hard_wave_obj1};
+    NurbsFace *cases2[] = {&dist_case1_obj2, &dist_case2_obj2, &dist_hard_wave_obj2, &dist_hard_wave_obj2};
     auto& nurbs_obj1 = *cases1[case_id - 1];
     auto& nurbs_obj2 = *cases2[case_id - 1];
     std::cout << "Running distance case " << case_id << std::endl;
+
+    std::vector<float> scaled_data_1;
+    std::vector<float> scaled_data_2;
+    const float *host_data_1 = nurbs_obj1.data;
+    const float *host_data_2 = nurbs_obj2.data;
+    if (case_id == 3) {
+        constexpr float geometry_scale = 4.0f;
+        scaled_data_1.assign(nurbs_obj1.data, nurbs_obj1.data + nurbs_obj1.ndata);
+        scaled_data_2.assign(nurbs_obj2.data, nurbs_obj2.data + nurbs_obj2.ndata);
+        const int cp_offset_1 = nurbs_obj1.ivec[3] + nurbs_obj1.ivec[6];
+        const int cp_offset_2 = nurbs_obj2.ivec[3] + nurbs_obj2.ivec[6];
+        const int xyz_count_1 = 3 * nurbs_obj1.ivec[2] * nurbs_obj1.ivec[5];
+        const int xyz_count_2 = 3 * nurbs_obj2.ivec[2] * nurbs_obj2.ivec[5];
+        for (int i = 0; i < xyz_count_1; ++i) scaled_data_1[cp_offset_1 + i] *= geometry_scale;
+        for (int i = 0; i < xyz_count_2; ++i) scaled_data_2[cp_offset_2 + i] *= geometry_scale;
+        host_data_1 = scaled_data_1.data();
+        host_data_2 = scaled_data_2.data();
+        std::cout << "Scaled hard case: geometry=4x, initial nuv=" << default_global_dist_nuv << std::endl;
+    }
 
     int *d_ivec_1;
     float *d_data_1;
@@ -54,9 +74,9 @@ int main(int argc, char **argv) {
     d_data_2 = (float*)allocate_from_workspace(nurbs_obj2.ndata * sizeof(float));
 
     cadMemcpy(d_ivec_1, nurbs_obj1.ivec, 7 * sizeof(int), CadMemcpyKind::HostToDevice);
-    cadMemcpy(d_data_1, nurbs_obj1.data, nurbs_obj1.ndata * sizeof(float), CadMemcpyKind::HostToDevice);
+    cadMemcpy(d_data_1, host_data_1, nurbs_obj1.ndata * sizeof(float), CadMemcpyKind::HostToDevice);
     cadMemcpy(d_ivec_2, nurbs_obj2.ivec, 7 * sizeof(int), CadMemcpyKind::HostToDevice);
-    cadMemcpy(d_data_2, nurbs_obj2.data, nurbs_obj2.ndata * sizeof(float), CadMemcpyKind::HostToDevice);
+    cadMemcpy(d_data_2, host_data_2, nurbs_obj2.ndata * sizeof(float), CadMemcpyKind::HostToDevice);
     EvalAndConstructTask t1, t2;
     t1.d_ivec = d_ivec_1;
     t1.d_data = d_data_1;

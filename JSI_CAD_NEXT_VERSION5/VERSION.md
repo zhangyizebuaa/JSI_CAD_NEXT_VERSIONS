@@ -7,7 +7,7 @@ Final paper implementation, based on Version 4.
 - Applies duplicate-region reuse to both distance and intersection refinement.
 - Uses the scaled second-derivative `compute_K` padding for conservative
   intersection AABBs by default.
-- Uses `nuv=128` for the first distance refinement round.
+- Uses `nuv=512` for the first distance refinement round.
 
 Common correctness update:
 
