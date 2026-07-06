@@ -355,14 +355,20 @@ static EvalAndConstructTask make_dist_refine_task(const EvalAndConstructTask &tm
 
 float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTask &t2) {
   CAD_PROFILE_SCOPE("minimum_distance");
-  std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+  const auto begin = std::chrono::steady_clock::now();
+  double evaluation_ms = 0.0;
+  double screening_ms = 0.0;
   std::vector<DistChain> chains(1);
   EvalAndConstructTask a = t1;
   EvalAndConstructTask b = t2;
+  const auto initial_evaluation_begin = std::chrono::steady_clock::now();
   chains[0].side1.push_back(run_evaluation_and_construction_task(a, cuda_streams[current_stream_id]));
   current_stream_id = (current_stream_id + 1) % num_cuda_streams;
   chains[0].side2.push_back(run_evaluation_and_construction_task(b, cuda_streams[current_stream_id]));
   current_stream_id = (current_stream_id + 1) % num_cuda_streams;
+  evaluation_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                             initial_evaluation_begin)
+                       .count();
 
   float current_min_dist = 0.0f;
   int round = 0;
@@ -371,7 +377,10 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
     auto &ch = chains[0];
     printf("Round: %d (pair refine, aligned_slots=%zu)\n", round, ch.side1.size());
     std::vector<DistPairRef> pairs;
+    const auto screening_begin = std::chrono::steady_clock::now();
     current_min_dist = dist_collect_top_pairs(ch, pairs);
+    screening_ms +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - screening_begin).count();
     printf("[current_min_dist] %lf\n", current_min_dist);
     printf("  pairs to refine: %zu\n", pairs.size());
 
@@ -457,6 +466,7 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
 
     std::vector<AABBResult> unique_res1(unique1.size());
     std::vector<AABBResult> unique_res2(unique2.size());
+    const auto refinement_evaluation_begin = std::chrono::steady_clock::now();
     for (size_t k = 0; k < unique1.size(); ++k) {
       EvalAndConstructTask task = unique1[k].task;
       unique_res1[k] = run_evaluation_and_construction_task(task, cuda_streams[current_stream_id]);
@@ -467,6 +477,9 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
       unique_res2[k] = run_evaluation_and_construction_task(task, cuda_streams[current_stream_id]);
       current_stream_id = (current_stream_id + 1) % num_cuda_streams;
     }
+    evaluation_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                               refinement_evaluation_begin)
+                         .count();
 
     DistChain next;
     next.side1.resize(reuse_jobs.size());
@@ -478,8 +491,15 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
     chains[0] = std::move(next);
   }
 
+  const auto end = std::chrono::steady_clock::now();
+  const double end_to_end_ms = std::chrono::duration<double, std::milli>(end - begin).count();
+  if (std::getenv("CAD_TIMING_BREAKDOWN") != nullptr) {
+    const double kernel_ms = evaluation_ms + screening_ms;
+    printf("CAD_TIMING end_to_end_ms=%.6f kernel_ms=%.6f evaluation_ms=%.6f screening_ms=%.6f "
+           "orchestration_ms=%.6f\n",
+           end_to_end_ms, kernel_ms, evaluation_ms, screening_ms, std::max(0.0, end_to_end_ms - kernel_ms));
+  }
   if (use_time) {
-    auto end = std::chrono::steady_clock::now();
     printf("Elapsed: %lfms\n", std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count() / 1000.0);
   }
   return current_min_dist;

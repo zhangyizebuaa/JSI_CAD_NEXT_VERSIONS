@@ -1,5 +1,7 @@
 #include "intersection.cuh"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -335,14 +337,21 @@ static void run_intersect_refine_batch(const std::vector<EvalAndConstructTask> &
 
 void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
   CAD_PROFILE_SCOPE("intersection");
+  const auto begin = std::chrono::steady_clock::now();
+  double evaluation_ms = 0.0;
+  double screening_ms = 0.0;
   initial_k_prints = 0;
   initial_u_span[1] = std::max(std::fabs(t1.ustop - t1.ustart), 1.0e-12f);
   initial_v_span[1] = std::max(std::fabs(t1.vstop - t1.vstart), 1.0e-12f);
   initial_u_span[2] = std::max(std::fabs(t2.ustop - t2.ustart), 1.0e-12f);
   initial_v_span[2] = std::max(std::fabs(t2.vstop - t2.vstart), 1.0e-12f);
   IntersectChain chain;
+  const auto initial_evaluation_begin = std::chrono::steady_clock::now();
   chain.side1.push_back(run_evaluation_and_construction_task(t1));
   chain.side2.push_back(run_evaluation_and_construction_task(t2));
+  evaluation_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                             initial_evaluation_begin)
+                       .count();
   printf("Compute_K AABB padding: %s\n", use_compute_k_padding() ? "on" : "off");
   std::fflush(stdout);
 
@@ -351,7 +360,10 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
     ++round;
     printf("Round: %d (pair refine, aligned_slots=%zu)\n", round, chain.side1.size());
     std::vector<IntersectPairRef> pairs;
+    const auto screening_begin = std::chrono::steady_clock::now();
     const int npairs = intersect_collect_pairs(chain, pairs);
+    screening_ms +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - screening_begin).count();
     printf("Round %d: overlap pairs = %d\n", round, npairs);
     if (round == 6) break;
     if (npairs == 0) break;
@@ -436,8 +448,12 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
 
     std::vector<AABBResult> unique_res1;
     std::vector<AABBResult> unique_res2;
+    const auto refinement_evaluation_begin = std::chrono::steady_clock::now();
     run_intersect_refine_batch(tasks1, unique_res1);
     run_intersect_refine_batch(tasks2, unique_res2);
+    evaluation_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                               refinement_evaluation_begin)
+                         .count();
 
     IntersectChain next;
     next.side1.resize(reuse_jobs.size());
@@ -447,5 +463,13 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
       next.side2[k] = unique_res2[reuse_jobs[k].side2_unit];
     }
     chain = std::move(next);
+  }
+  if (std::getenv("CAD_TIMING_BREAKDOWN") != nullptr) {
+    const double end_to_end_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    const double kernel_ms = evaluation_ms + screening_ms;
+    printf("CAD_TIMING end_to_end_ms=%.6f kernel_ms=%.6f evaluation_ms=%.6f screening_ms=%.6f "
+           "orchestration_ms=%.6f\n",
+           end_to_end_ms, kernel_ms, evaluation_ms, screening_ms, std::max(0.0, end_to_end_ms - kernel_ms));
   }
 }

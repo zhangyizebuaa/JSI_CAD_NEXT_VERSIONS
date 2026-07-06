@@ -27,7 +27,8 @@ input, paired with the 4x denser initial grid to retain approximately the same p
 spacing. Case 4 is the unscaled hard-wave input. Intersection currently provides cases 1 and 2.
 `run_all_cases` runs all four distance cases followed by both intersection cases.
 
-Distance uses 51 OpenMP threads by default and intersection uses 55. Override either command with
+Distance uses 72 OpenMP threads for the current paper measurements and intersection uses 55.
+Override either command with
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
 Distance uses an initial sampling width of `nuv=512` in every version; later refinement rounds
 retain the existing `nuv=16` setting.
@@ -46,3 +47,17 @@ make run_intersect CASE=1 USE_COMPUTE_K=0
 ```
 
 For paper reproduction, use `JSI_CAD_NEXT_VERSION5/` as the final implementation.
+
+Set `CAD_TIMING_BREAKDOWN=1` to print both timing scopes used by the paper:
+
+```bash
+CAD_TIMING_BREAKDOWN=1 OMP_PROC_BIND=close OMP_PLACES=cores \
+  make -C JSI_CAD_NEXT_VERSION5 run_dist CASE=1 THREADS=72
+CAD_TIMING_BREAKDOWN=1 OMP_PROC_BIND=close OMP_PLACES=cores \
+  make -C JSI_CAD_NEXT_VERSION5 run_intersect CASE=1 THREADS=55
+```
+
+`end_to_end_ms` covers the complete query. `kernel_ms` is the accumulated
+wall-clock time for surface evaluation/AABB construction and AABB matrix
+screening. The remaining `orchestration_ms` covers pair metadata, deduplication,
+and result reassembly.
