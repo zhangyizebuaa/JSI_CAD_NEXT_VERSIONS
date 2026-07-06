@@ -1,10 +1,14 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepAlgoAPI_Section.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <GeomAPI_IntSS.hxx>
 #include <Geom_BSplineSurface.hxx>
 #include <NCollection_Array1.hxx>
 #include <NCollection_Array2.hxx>
+#include <OSD_ThreadPool.hxx>
 #include <Standard_Failure.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS_Face.hxx>
 #include <gp_Pnt.hxx>
 
@@ -155,16 +159,20 @@ void print_samples(const std::vector<double> &samples) {
 }  // namespace
 
 int main(int argc, char **argv) {
-  if (argc < 3 || argc > 4) {
-    std::cerr << "Usage: " << argv[0] << " distance|intersection CASE [REPEATS]\n";
+  if (argc < 3 || argc > 5) {
+    std::cerr << "Usage: " << argv[0]
+              << " distance|intersection|section CASE [REPEATS] [THREADS]\n";
     return 2;
   }
 
   try {
     const std::string mode = argv[1];
     const int case_id = std::stoi(argv[2]);
-    const int repeats = argc == 4 ? std::max(1, std::stoi(argv[3])) : 5;
+    const int repeats = argc >= 4 ? std::max(1, std::stoi(argv[3])) : 5;
+    const int threads = argc == 5 ? std::max(1, std::stoi(argv[4])) : 1;
+    OSD_ThreadPool::DefaultPool(threads)->SetNbDefaultThreadsToLaunch(threads);
     const auto faces = mode == "distance" ? distance_case(case_id) : intersection_case(case_id);
+    const bool parallel = threads > 1 && mode != "intersection";
 
     occ::handle<Geom_BSplineSurface> surface1;
     occ::handle<Geom_BSplineSurface> surface2;
@@ -181,13 +189,17 @@ int main(int argc, char **argv) {
 
     std::cout << std::fixed << std::setprecision(6);
     std::cout << "engine=OpenCASCADE\nmode=" << mode << "\ncase=" << case_id << "\nrepeats=" << repeats
+              << "\nthreads=" << threads << "\nparallel=" << (parallel ? "true" : "false")
               << "\nconstruction_ms=" << construction.front() << '\n';
 
     if (mode == "distance") {
       double distance = 0.0;
       auto run = [&] {
-        BRepExtrema_DistShapeShape extrema(face1, face2);
-        if (!extrema.IsDone()) throw std::runtime_error("OpenCASCADE distance failed");
+        BRepExtrema_DistShapeShape extrema;
+        extrema.LoadS1(face1);
+        extrema.LoadS2(face2);
+        extrema.SetMultiThread(threads > 1);
+        if (!extrema.Perform()) throw std::runtime_error("OpenCASCADE distance failed");
         distance = extrema.Value();
       };
       run();
@@ -205,8 +217,24 @@ int main(int argc, char **argv) {
       const auto samples = measure_ms(repeats, run);
       std::cout << "intersection_curves=" << curve_count << '\n';
       print_samples(samples);
+    } else if (mode == "section") {
+      int curve_count = 0;
+      auto run = [&] {
+        BRepAlgoAPI_Section intersection(face1, face2, false);
+        intersection.SetRunParallel(threads > 1);
+        intersection.Build();
+        if (!intersection.IsDone()) throw std::runtime_error("OpenCASCADE intersection failed");
+        curve_count = 0;
+        for (TopExp_Explorer edge(intersection.Shape(), TopAbs_EDGE); edge.More(); edge.Next()) {
+          ++curve_count;
+        }
+      };
+      run();
+      const auto samples = measure_ms(repeats, run);
+      std::cout << "intersection_curves=" << curve_count << '\n';
+      print_samples(samples);
     } else {
-      throw std::runtime_error("mode must be distance or intersection");
+      throw std::runtime_error("mode must be distance, intersection, or section");
     }
   } catch (const Standard_Failure &failure) {
     std::cerr << "OpenCASCADE error: " << failure.what() << '\n';
