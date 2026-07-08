@@ -22,3 +22,7 @@ extern struct NurbsFace inter_case1_obj1;
 extern struct NurbsFace inter_case1_obj2;
 extern struct NurbsFace inter_case2_obj1;
 extern struct NurbsFace inter_case2_obj2;
+extern struct NurbsFace inter_case3_obj1;
+extern struct NurbsFace inter_case3_obj2;
+extern struct NurbsFace inter_case4_obj1;
+extern struct NurbsFace inter_case4_obj2;
