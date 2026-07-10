@@ -24,10 +24,10 @@ make run_all_cases
 
 Distance cases 1 and 2 are the original inputs. Case 3 is a 4x geometric scaling of the hard-wave
 input, paired with the 4x denser initial grid to retain approximately the same physical sampling
-spacing. Case 4 is the unscaled hard-wave input. Intersection currently provides cases 1 and 2.
-`run_all_cases` runs all four distance cases followed by both intersection cases.
+spacing. Case 4 is the unscaled hard-wave input. Intersection provides cases 1 through 4.
+`run_all_cases` runs all four distance cases followed by all four intersection cases.
 
-Distance uses 72 OpenMP threads for the current paper measurements and intersection uses 55.
+Distance uses 51 OpenMP threads for the current paper measurements and intersection uses 55.
 Override either command with
 `THREADS=<n>`, or set separate defaults with `DIST_THREADS=<n>` and `INTER_THREADS=<n>`.
 Distance uses an initial sampling width of `nuv=512` in every version; later refinement rounds
@@ -48,11 +48,74 @@ make run_intersect CASE=1 USE_COMPUTE_K=0
 
 For paper reproduction, use `JSI_CAD_NEXT_VERSION5/` as the final implementation.
 
+## Artifact layout and reproduction
+
+Source-code versions:
+
+- `JSI_CAD_NEXT_VERSION0/`: serial CPU baseline source.
+- `JSI_CAD_NEXT_VERSION1/`: OpenMP baseline source.
+- `JSI_CAD_NEXT_VERSION2/`: pair-preserving distance/intersection source.
+- `JSI_CAD_NEXT_VERSION3/`: SVE-enabled matrix screening source.
+- `JSI_CAD_NEXT_VERSION4/`: batched intersection-refinement source.
+- `JSI_CAD_NEXT_VERSION5/`: final source with duplicate subregion reuse.
+
+Build a selected version:
+
+```bash
+cd JSI_CAD_NEXT_VERSION5
+make clean
+make all
+```
+
+Run one JSI case:
+
+```bash
+OMP_PROC_BIND=close OMP_PLACES=cores make run_dist CASE=1 THREADS=51
+OMP_PROC_BIND=close OMP_PLACES=cores make run_intersect CASE=1 THREADS=55
+```
+
+Run all source versions, four distance cases, four intersection cases, and the
+OpenCASCADE comparison. Each measurement is repeated five times and the best
+time is reported:
+
+```bash
+OMP_PROC_BIND=close OMP_PLACES=cores \
+  bash benchmarks/run_all_benchmarks.sh
+```
+
+Useful environment overrides:
+
+```bash
+REPEATS=5
+VERSIONS="1 2 3 4 5"
+DISTANCE_CASES="1 2 3 4"
+INTERSECTION_CASES="1 2 3 4"
+DISTANCE_THREADS=51
+INTERSECTION_THREADS=55
+RUN_OCCT=1
+OCCT_BUILD=/path/to/OCCT-8.0.0-build
+```
+
+Test data are stored in every version under `examples/data/`. Distance uses
+`dist_case1.cu` through `dist_case4.cu`; intersection uses
+`inter_case*-1_data.cu` and `inter_case*-2_data.cu`.
+
+Result validation uses the printed query result in each log:
+
+- Distance: compare the final `[current_min_dist]` value across versions for
+  the same case.
+- Intersection: compare the final `overlap pairs` count across versions for
+  the same case.
+- OpenCASCADE: compare `distance=` or `intersection_curves=` in the OCCT log.
+
+The script stores full logs plus `raw_runs.csv` and `best_summary.csv` under
+`results/<timestamp>/`.
+
 Set `CAD_TIMING_BREAKDOWN=1` to print both timing scopes used by the paper:
 
 ```bash
 CAD_TIMING_BREAKDOWN=1 OMP_PROC_BIND=close OMP_PLACES=cores \
-  make -C JSI_CAD_NEXT_VERSION5 run_dist CASE=1 THREADS=72
+  make -C JSI_CAD_NEXT_VERSION5 run_dist CASE=1 THREADS=51
 CAD_TIMING_BREAKDOWN=1 OMP_PROC_BIND=close OMP_PLACES=cores \
   make -C JSI_CAD_NEXT_VERSION5 run_intersect CASE=1 THREADS=55
 ```

@@ -141,19 +141,20 @@ std::pair<NurbsFace *, NurbsFace *> distance_case(int case_id) {
 }
 
 std::pair<NurbsFace *, NurbsFace *> intersection_case(int case_id) {
-  NurbsFace *side1[] = {&inter_case1_obj1, &inter_case2_obj1};
-  NurbsFace *side2[] = {&inter_case1_obj2, &inter_case2_obj2};
-  if (case_id < 1 || case_id > 2) throw std::runtime_error("intersection case must be 1..2");
+  NurbsFace *side1[] = {&inter_case1_obj1, &inter_case2_obj1, &inter_case3_obj1, &inter_case4_obj1};
+  NurbsFace *side2[] = {&inter_case1_obj2, &inter_case2_obj2, &inter_case3_obj2, &inter_case4_obj2};
+  if (case_id < 1 || case_id > 4) throw std::runtime_error("intersection case must be 1..4");
   return {side1[case_id - 1], side2[case_id - 1]};
 }
 
 void print_samples(const std::vector<double> &samples) {
+  const double best = *std::min_element(samples.begin(), samples.end());
   std::cout << "samples_ms=";
   for (size_t i = 0; i < samples.size(); ++i) {
     if (i) std::cout << ',';
     std::cout << samples[i];
   }
-  std::cout << "\nmean_ms=" << mean(samples) << "\nmedian_ms=" << median(samples) << '\n';
+  std::cout << "\nbest_ms=" << best << "\nmean_ms=" << mean(samples) << "\nmedian_ms=" << median(samples) << '\n';
 }
 
 }  // namespace

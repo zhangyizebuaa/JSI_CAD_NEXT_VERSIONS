@@ -17,6 +17,10 @@ g++ -O3 -std=c++17 \
   "$version_dir/build/data_i12.o" \
   "$version_dir/build/data_i21.o" \
   "$version_dir/build/data_i22.o" \
+  "$version_dir/build/data_i31.o" \
+  "$version_dir/build/data_i32.o" \
+  "$version_dir/build/data_i41.o" \
+  "$version_dir/build/data_i42.o" \
   "$version_dir/build/data_d1.o" \
   "$version_dir/build/data_d2.o" \
   "$version_dir/build/data_d3.o" \
