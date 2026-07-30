@@ -1,6 +1,7 @@
 #include "distance_analysis.cuh"
 
 #include <algorithm>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
