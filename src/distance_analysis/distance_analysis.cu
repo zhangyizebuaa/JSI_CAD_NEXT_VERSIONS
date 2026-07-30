@@ -320,7 +320,7 @@ static inline svfloat32_t center_distance_k_sq_sve(size_t i, int j, const float 
     const svfloat32_t d = svsqrt_f32_x(pg, d2);
     const float kw = dist_k_weight();
     const svfloat32_t k1w = svdup_f32(k1_i * kw);
-    const svfloat32_t j_idx = svindex_s32(j, 1);
+    const svint32_t j_idx = svindex_s32(j, 1);
     const svfloat32_t k2j = svld1_gather_s32index_f32(pg, k2, j_idx);
     const svfloat32_t kdisc = svsub_f32_x(pg, svsub_f32_x(pg, d, k1w), svmul_f32_x(pg, svdup_f32(kw), k2j));
     const svfloat32_t d_clamped = svmax_f32_x(pg, svdup_f32(0.0f), kdisc);
