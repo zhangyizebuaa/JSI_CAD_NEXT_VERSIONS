@@ -36,10 +36,6 @@ static int k_of_topk = 8;
 static int max_layers = 4;
 static bool use_time = false;
 
-static int dist_initial_k_prints = 0;
-static float dist_initial_u_span[3] = {1.0f, 1.0f, 1.0f};
-static float dist_initial_v_span[3] = {1.0f, 1.0f, 1.0f};
-
 static bool use_dist_k_padding() {
   const char *value = std::getenv("CAD_DIST_USE_K");
   return value != nullptr && std::strcmp(value, "0") != 0;
@@ -51,12 +47,16 @@ static void gather_idx_kernel_host(int *data_out, size_t size, int max_num, cons
   }
 }
 
-static void construct_aabbs_distance_host(int un, int vn, const float *points, float curvature_padding,
-                                          float *center, float *radius, float *diagonal) {
-  // When curvature_padding == 0, matches FORMER `construct_aabbs_distance` kernel (including k margin).
-  // Non-zero padding expands AABB radius/diagonal for conservative overlap detection,
-  // mirroring the intersection `construct_aabbs_host` logic.
-  const float k = curvature_padding;
+// Construct tight AABBs from 4-corner evaluation points.
+// When need_k is true, also compute per-patch curvature discount k_arr[id]
+// from the second derivatives at the 4 corners (at positions 9-17 in the 18-tuple).
+// k_arr[id] = (max_uu + 2*max_uv + max_vv) / 8 * ustep²  (Taylor bound for one cell).
+// AABBs are always tight (no curvature padding added to radius).
+static void construct_aabbs_distance_host(int un, int vn, const float *points,
+                                          bool need_k, float ustep, float vstep,
+                                          float *center, float *radius, float *diagonal, float *k_arr) {
+  const float cell_scale = std::max(ustep, vstep);
+  const float cell_scale_sq = cell_scale * cell_scale;
   for (int i = 0; i < un - 1; ++i) {
     for (int j = 0; j < vn - 1; ++j) {
       int id = i * (vn - 1) + j;
@@ -82,16 +82,38 @@ static void construct_aabbs_distance_host(int un, int vn, const float *points, f
       float zmax = std::max(points[p0 * ONE_UV_SIZE + 2],
                             std::max(points[p1 * ONE_UV_SIZE + 2],
                                      std::max(points[p2 * ONE_UV_SIZE + 2], points[p3 * ONE_UV_SIZE + 2])));
-      float x_span = xmax - xmin + 2.0f * k;
-      float y_span = ymax - ymin + 2.0f * k;
-      float z_span = zmax - zmin + 2.0f * k;
-      center[id * 3] = (xmin - k + xmax + k) / 2.0f;
-      center[id * 3 + 1] = (ymin - k + ymax + k) / 2.0f;
-      center[id * 3 + 2] = (zmin - k + zmax + k) / 2.0f;
+      // Tight AABB — no curvature padding added
+      float x_span = xmax - xmin;
+      float y_span = ymax - ymin;
+      float z_span = zmax - zmin;
+      center[id * 3] = (xmin + xmax) / 2.0f;
+      center[id * 3 + 1] = (ymin + ymax) / 2.0f;
+      center[id * 3 + 2] = (zmin + zmax) / 2.0f;
       radius[id * 3] = x_span / 2.0f;
       radius[id * 3 + 1] = y_span / 2.0f;
       radius[id * 3 + 2] = z_span / 2.0f;
       diagonal[id] = std::sqrt(x_span * x_span + y_span * y_span + z_span * z_span);
+
+      // Per-patch curvature discount from local second derivatives
+      if (need_k && k_arr) {
+        float max_uu = 0.0f, max_uv = 0.0f, max_vv = 0.0f;
+        const int corners[4] = {p0, p1, p2, p3};
+        for (int c = 0; c < 4; ++c) {
+          int base = corners[c] * ONE_UV_SIZE;
+          float uu = CadMax(std::fabs(points[base + 9]),
+                            CadMax(std::fabs(points[base + 10]), std::fabs(points[base + 11])));
+          float uv = CadMax(std::fabs(points[base + 12]),
+                            CadMax(std::fabs(points[base + 13]), std::fabs(points[base + 14])));
+          float vv = CadMax(std::fabs(points[base + 15]),
+                            CadMax(std::fabs(points[base + 16]), std::fabs(points[base + 17])));
+          if (uu > max_uu) max_uu = uu;
+          if (uv > max_uv) max_uv = uv;
+          if (vv > max_vv) max_vv = vv;
+        }
+        // Taylor bound: K_uv * ustep² → 3D curvature discount for this patch
+        float k_uv = (max_uu + 2.0f * max_uv + max_vv) / 8.0f;
+        k_arr[id] = k_uv * cell_scale_sq;
+      }
     }
   }
 }
@@ -111,32 +133,19 @@ AABBResult run_evaluation_and_construction_task(EvalAndConstructTask &task, CadS
 
   EG_spline2dDeriv_irrational(task.d_ivec, task.d_data, ustep, vstep, task.ustart, task.vstart, nuv, results);
 
-  float curvature_padding = 0.0f;
-  if (use_dist_k_padding()) {
-    CAD_PROFILE_SCOPE("compute_K_distance");
-    std::vector<float> second_deriv_max(static_cast<size_t>(nuv) * nuv * 3);
-    float raw_k = 0.0f;
-    compute_K(results, second_deriv_max.data(), &raw_k, nuv);
-    const int side = (task.eval_task_side == 2) ? 2 : 1;
-    const float u_scale = std::fabs(task.ustop - task.ustart) / dist_initial_u_span[side];
-    const float v_scale = std::fabs(task.vstop - task.vstart) / dist_initial_v_span[side];
-    const float patch_scale = std::max(u_scale, v_scale);
-    curvature_padding = raw_k * patch_scale * patch_scale;
-    if (!std::isfinite(curvature_padding) || curvature_padding < 0.0f) curvature_padding = 0.0f;
-    if (dist_initial_k_prints < 2) {
-      printf("Compute_K(dist) initial side%d raw=%g scale=%g padding=%g\n", task.eval_task_side, raw_k, patch_scale,
-             curvature_padding);
-      std::fflush(stdout);
-      ++dist_initial_k_prints;
-    }
+  const bool kmode = use_dist_k_padding();
+  float *k_arr = nullptr;
+  if (kmode) {
+    k_arr = static_cast<float *>(allocate_from_workspace(naabb_width * naabb_width * sizeof(float)));
   }
-  construct_aabbs_distance_host(nuv, nuv, results, curvature_padding, center, radius, diagonal);
+  construct_aabbs_distance_host(nuv, nuv, results, kmode, ustep, vstep, center, radius, diagonal, k_arr);
 
   AABBResult res;
   res.naabb_width = naabb_width;
   res.d_aabb_center = center;
   res.d_aabb_radius = radius;
   res.d_aabb_diagonal = diagonal;
+  res.d_aabb_k = k_arr;
   res.eval_task_side = task.eval_task_side;
   res.ustart = task.ustart;
   res.vstart = task.vstart;
@@ -237,14 +246,18 @@ static inline float center_distance_sq(size_t i, size_t j, const float *c1, cons
   return dx * dx + dy * dy + dz * dz;
 }
 
-// AABB lower-bound distance squared: max(0, |c1-c2| - r1 - r2) per axis.
-// When two AABBs overlap on all three axes the lower-bound is 0.
-static inline float aabb_lower_bound_distance_sq(size_t i, size_t j,
-    const float *c1, const float *r1, const float *c2, const float *r2) {
-  const float dx = std::max(0.0f, std::fabs(c1[i * 3] - c2[j * 3]) - r1[i * 3] - r2[j * 3]);
-  const float dy = std::max(0.0f, std::fabs(c1[i * 3 + 1] - c2[j * 3 + 1]) - r1[i * 3 + 1] - r2[j * 3 + 1]);
-  const float dz = std::max(0.0f, std::fabs(c1[i * 3 + 2] - c2[j * 3 + 2]) - r1[i * 3 + 2] - r2[j * 3 + 2]);
-  return dx * dx + dy * dy + dz * dz;
+// K-discounted center-distance squared: max(0, |c1-c2| - (K_i + K_j)) as a scalar.
+// High-curvature patches get their distance discounted so they aren't screened out.
+// When k1/k2 is null (kmode=false), falls back to plain center_distance_sq.
+static inline float center_distance_k_sq(size_t i, size_t j,
+    const float *c1, const float *k1, const float *c2, const float *k2) {
+  const float dx = c1[i * 3] - c2[j * 3];
+  const float dy = c1[i * 3 + 1] - c2[j * 3 + 1];
+  const float dz = c1[i * 3 + 2] - c2[j * 3 + 2];
+  float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+  const float kdisc = (k1 ? k1[i] : 0.0f) + (k2 ? k2[j] : 0.0f);
+  d = std::max(0.0f, d - kdisc);
+  return d * d;
 }
 
 #if JSI_CAD_HAS_SVE
@@ -263,34 +276,32 @@ static inline svfloat32_t center_distance_sq_sve(size_t i, int j, const float *c
   return svadd_f32_x(pg, d2, svmul_f32_x(pg, dz, dz));
 }
 
-static inline svfloat32_t aabb_lower_bound_distance_sq_sve(size_t i, int j, const float *c1, const float *r1,
-                                                           const float *c2, const float *r2, svbool_t pg) {
+// K-discounted center distance SVE: sqrt(dx²+dy²+dz²) - K_i - K_j, clamped to ≥0, then squared.
+// When k2 is null (kmode=false), falls back to plain center_distance_sq_sve.
+static inline svfloat32_t center_distance_k_sq_sve(size_t i, int j, const float *c1, const float *c2,
+                                                    float k1_i, const float *k2, svbool_t pg) {
   const svint32_t x_idx = svindex_s32(j * 3, 3);
   const svint32_t y_idx = svindex_s32(j * 3 + 1, 3);
   const svint32_t z_idx = svindex_s32(j * 3 + 2, 3);
   const svfloat32_t cx1 = svdup_f32(c1[i * 3]);
   const svfloat32_t cy1 = svdup_f32(c1[i * 3 + 1]);
   const svfloat32_t cz1 = svdup_f32(c1[i * 3 + 2]);
-  const svfloat32_t rx1 = svdup_f32(r1[i * 3]);
-  const svfloat32_t ry1 = svdup_f32(r1[i * 3 + 1]);
-  const svfloat32_t rz1 = svdup_f32(r1[i * 3 + 2]);
-  const svfloat32x3_t c2v = svld3_f32(pg, c2 + static_cast<size_t>(j) * 3);
-  const svfloat32x3_t r2v = svld3_f32(pg, r2 + static_cast<size_t>(j) * 3);
-  const svfloat32_t dx =
-      svmax_f32_x(pg, svdup_f32(0.0f),
-                  svsub_f32_x(pg, svabs_f32_x(pg, svsub_f32_x(pg, cx1, svget3_f32(c2v, 0))),
-                              svadd_f32_x(pg, rx1, svget3_f32(r2v, 0))));
-  const svfloat32_t dy =
-      svmax_f32_x(pg, svdup_f32(0.0f),
-                  svsub_f32_x(pg, svabs_f32_x(pg, svsub_f32_x(pg, cy1, svget3_f32(c2v, 1))),
-                              svadd_f32_x(pg, ry1, svget3_f32(r2v, 1))));
-  const svfloat32_t dz =
-      svmax_f32_x(pg, svdup_f32(0.0f),
-                  svsub_f32_x(pg, svabs_f32_x(pg, svsub_f32_x(pg, cz1, svget3_f32(c2v, 2))),
-                              svadd_f32_x(pg, rz1, svget3_f32(r2v, 2))));
+  const svfloat32_t dx = svsub_f32_x(pg, cx1, svld1_gather_s32index_f32(pg, c2, x_idx));
+  const svfloat32_t dy = svsub_f32_x(pg, cy1, svld1_gather_s32index_f32(pg, c2, y_idx));
+  const svfloat32_t dz = svsub_f32_x(pg, cz1, svld1_gather_s32index_f32(pg, c2, z_idx));
   svfloat32_t d2 = svmul_f32_x(pg, dx, dx);
   d2 = svadd_f32_x(pg, d2, svmul_f32_x(pg, dy, dy));
-  return svadd_f32_x(pg, d2, svmul_f32_x(pg, dz, dz));
+  d2 = svadd_f32_x(pg, d2, svmul_f32_x(pg, dz, dz));
+  if (k2) {
+    // d = max(0, sqrt(d2) - k1_i - k2[j])
+    const svfloat32_t d = svsqrt_f32_x(pg, d2);
+    const svfloat32_t kdisc =
+        svsub_f32_x(pg, svsub_f32_x(pg, d, svdup_f32(k1_i)),
+                    svld1_gather_s32index_f32(pg, k2, svindex_s32(j, 1)));
+    const svfloat32_t d_clamped = svmax_f32_x(pg, svdup_f32(0.0f), kdisc);
+    return svmul_f32_x(pg, d_clamped, d_clamped);
+  }
+  return d2;
 }
 #endif
 
@@ -356,8 +367,10 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
       for (int j = 0; j < n2; j += vl) {
         const svbool_t pg = svwhilelt_b32(j, n2);
         const svfloat32_t d2v = kmode
-            ? aabb_lower_bound_distance_sq_sve(static_cast<size_t>(i), j,
-                a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius, pg)
+            ? center_distance_k_sq_sve(static_cast<size_t>(i), j,
+                a1.d_aabb_center, a2.d_aabb_center,
+                a1.d_aabb_k ? a1.d_aabb_k[i] : 0.0f,
+                a2.d_aabb_k, pg)
             : center_distance_sq_sve(static_cast<size_t>(i), j, a1.d_aabb_center, a2.d_aabb_center, pg);
         svbool_t hit = pg;
         if (static_cast<int>(local.size()) >= limit) {
@@ -375,8 +388,8 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
 #else
       for (int j = 0; j < n2; ++j) {
         const float d2 = kmode
-            ? aabb_lower_bound_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j),
-                a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius)
+            ? center_distance_k_sq(static_cast<size_t>(i), static_cast<size_t>(j),
+                a1.d_aabb_center, a1.d_aabb_k, a2.d_aabb_center, a2.d_aabb_k)
             : center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
                                  a2.d_aabb_center);
         dist_pair_top_push(local, limit, d2, slot, i, j);
@@ -402,8 +415,8 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
     for (int i = 0; i < n1; ++i) {
       for (int j = 0; j < n2; ++j) {
         const float d2 = kmode
-            ? aabb_lower_bound_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j),
-                a1.d_aabb_center, a1.d_aabb_radius, a2.d_aabb_center, a2.d_aabb_radius)
+            ? center_distance_k_sq(static_cast<size_t>(i), static_cast<size_t>(j),
+                a1.d_aabb_center, a1.d_aabb_k, a2.d_aabb_center, a2.d_aabb_k)
             : center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
                                  a2.d_aabb_center);
         dist_pair_top_push(best, limit, d2, static_cast<int>(slot), i, j);
@@ -438,16 +451,15 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
   double screening_ms = 0.0;
 
   // Initialize span state for compute_K scale calculation (mirrors intersection init).
-  dist_initial_k_prints = 0;
-  dist_initial_u_span[1] = std::max(std::fabs(t1.ustop - t1.ustart), 1.0e-12f);
-  dist_initial_v_span[1] = std::max(std::fabs(t1.vstop - t1.vstart), 1.0e-12f);
-  dist_initial_u_span[2] = std::max(std::fabs(t2.ustop - t2.ustart), 1.0e-12f);
-  dist_initial_v_span[2] = std::max(std::fabs(t2.vstop - t2.vstart), 1.0e-12f);
+  if (use_dist_k_padding()) {
+    printf("  Per-patch K discount active (tight AABBs, K-discounted distance)\n");
+    std::fflush(stdout);
+  }
 
   std::vector<DistChain> chains(1);
   EvalAndConstructTask a = t1;
   EvalAndConstructTask b = t2;
-  printf("Compute_K AABB padding (dist): %s\n", use_dist_k_padding() ? "on" : "off");
+  printf("Compute_K distance discount (dist): %s\n", use_dist_k_padding() ? "on" : "off");
   std::fflush(stdout);
 
   const auto initial_evaluation_begin = std::chrono::steady_clock::now();

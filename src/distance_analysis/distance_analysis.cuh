@@ -19,6 +19,7 @@ struct AABBResult {
     float *d_aabb_center;
     float *d_aabb_radius;
     float *d_aabb_diagonal;
+    float *d_aabb_k;      // per-patch curvature discount (0 if CAD_DIST_USE_K=0)
 
     float ustart;
     float vstart;
