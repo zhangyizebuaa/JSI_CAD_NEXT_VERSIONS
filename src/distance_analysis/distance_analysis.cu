@@ -42,6 +42,13 @@ static bool use_dist_k_padding() {
   return value != nullptr && std::strcmp(value, "0") != 0;
 }
 
+static float dist_k_weight() {
+  const char *value = std::getenv("CAD_DIST_K_WEIGHT");
+  if (!value) return 1.0f;
+  float w = std::atof(value);
+  return (w >= 0.0f && w <= 1.0f) ? w : 1.0f;
+}
+
 static void gather_idx_kernel_host(int *data_out, size_t size, int max_num, const int *pos, const int *pre) {
   for (size_t i = 0; i < size; ++i) {
     if (pre[i] && pre[i] < max_num) data_out[pos[i] - 1] = static_cast<int>(i);
@@ -111,9 +118,11 @@ static void construct_aabbs_distance_host(int un, int vn, const float *points,
           if (uv > max_uv) max_uv = uv;
           if (vv > max_vv) max_vv = vv;
         }
-        // Taylor bound: K_uv * ustep² → 3D curvature discount for this patch
+        // Taylor bound in UV: K_uv * ustep²
+        // Map to 3D using the patch's actual diagonal as spatial scale
         float k_uv = (max_uu + 2.0f * max_uv + max_vv) / 8.0f;
-        k_arr[id] = k_uv * cell_scale_sq;
+        float diag = std::sqrt(x_span * x_span + y_span * y_span + z_span * z_span);
+        k_arr[id] = k_uv * cell_scale_sq * diag;
       }
     }
   }
@@ -269,7 +278,7 @@ static inline float center_distance_k_sq(size_t i, size_t j,
   const float dy = c1[i * 3 + 1] - c2[j * 3 + 1];
   const float dz = c1[i * 3 + 2] - c2[j * 3 + 2];
   float d = std::sqrt(dx * dx + dy * dy + dz * dz);
-  const float kdisc = (k1 ? k1[i] : 0.0f) + (k2 ? k2[j] : 0.0f);
+  const float kdisc = dist_k_weight() * ((k1 ? k1[i] : 0.0f) + (k2 ? k2[j] : 0.0f));
   d = std::max(0.0f, d - kdisc);
   return d * d;
 }
@@ -307,11 +316,13 @@ static inline svfloat32_t center_distance_k_sq_sve(size_t i, int j, const float 
   d2 = svadd_f32_x(pg, d2, svmul_f32_x(pg, dy, dy));
   d2 = svadd_f32_x(pg, d2, svmul_f32_x(pg, dz, dz));
   if (k2) {
-    // d = max(0, sqrt(d2) - k1_i - k2[j])
+    // d = max(0, sqrt(d2) - w*K_i - w*K_j)
     const svfloat32_t d = svsqrt_f32_x(pg, d2);
-    const svfloat32_t kdisc =
-        svsub_f32_x(pg, svsub_f32_x(pg, d, svdup_f32(k1_i)),
-                    svld1_gather_s32index_f32(pg, k2, svindex_s32(j, 1)));
+    const float kw = dist_k_weight();
+    const svfloat32_t k1w = svdup_f32(k1_i * kw);
+    const svfloat32_t j_idx = svindex_s32(j, 1);
+    const svfloat32_t k2j = svld1_gather_s32index_f32(pg, k2, j_idx);
+    const svfloat32_t kdisc = svsub_f32_x(pg, svsub_f32_x(pg, d, k1w), svmul_f32_x(pg, svdup_f32(kw), k2j));
     const svfloat32_t d_clamped = svmax_f32_x(pg, svdup_f32(0.0f), kdisc);
     return svmul_f32_x(pg, d_clamped, d_clamped);
   }
@@ -466,7 +477,7 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
 
   // Initialize span state for compute_K scale calculation (mirrors intersection init).
   if (use_dist_k_padding()) {
-    printf("  Per-patch K discount active (tight AABBs, K-discounted distance)\n");
+    printf("  Per-patch K discount active (tight AABBs, weight=%.4f)\n", dist_k_weight());
     std::fflush(stdout);
   }
 

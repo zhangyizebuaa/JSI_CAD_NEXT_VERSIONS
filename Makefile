@@ -80,7 +80,7 @@ build/test_dist: lib data examples/distance_analysis_example.cu include/nurbs_da
 	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o build/data_d3.o -o build/test_dist $(LDFLAGS)
 
 run_dist: build/test_dist
-	CAD_DIST_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist $(CASE)
+	CAD_DIST_USE_K=$(USE_COMPUTE_K) CAD_DIST_K_WEIGHT=$(K_WEIGHT) OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist $(CASE)
 
 build/test_intersect: lib data examples/intersection_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/intersection_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_i31.o build/data_i32.o build/data_i41.o build/data_i42.o -o build/test_intersect $(LDFLAGS)
