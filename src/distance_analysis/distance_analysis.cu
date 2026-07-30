@@ -100,12 +100,12 @@ static void construct_aabbs_distance_host(int un, int vn, const float *points,
         const int corners[4] = {p0, p1, p2, p3};
         for (int c = 0; c < 4; ++c) {
           int base = corners[c] * ONE_UV_SIZE;
-          float uu = CadMax(std::fabs(points[base + 9]),
-                            CadMax(std::fabs(points[base + 10]), std::fabs(points[base + 11])));
-          float uv = CadMax(std::fabs(points[base + 12]),
-                            CadMax(std::fabs(points[base + 13]), std::fabs(points[base + 14])));
-          float vv = CadMax(std::fabs(points[base + 15]),
-                            CadMax(std::fabs(points[base + 16]), std::fabs(points[base + 17])));
+          float uu = std::max(std::fabs(points[base + 9]),
+                            std::max(std::fabs(points[base + 10]), std::fabs(points[base + 11])));
+          float uv = std::max(std::fabs(points[base + 12]),
+                            std::max(std::fabs(points[base + 13]), std::fabs(points[base + 14])));
+          float vv = std::max(std::fabs(points[base + 15]),
+                            std::max(std::fabs(points[base + 16]), std::fabs(points[base + 17])));
           if (uu > max_uu) max_uu = uu;
           if (uv > max_uv) max_uv = uv;
           if (vv > max_vv) max_vv = vv;
