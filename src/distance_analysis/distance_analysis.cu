@@ -140,6 +140,19 @@ AABBResult run_evaluation_and_construction_task(EvalAndConstructTask &task, CadS
   }
   construct_aabbs_distance_host(nuv, nuv, results, kmode, ustep, vstep, center, radius, diagonal, k_arr);
 
+  if (kmode && k_arr) {
+    float k_min = FLT_MAX, k_max = -FLT_MAX, k_sum = 0.0f;
+    int nk = naabb_width * naabb_width;
+    for (int i = 0; i < nk; ++i) {
+      if (k_arr[i] < k_min) k_min = k_arr[i];
+      if (k_arr[i] > k_max) k_max = k_arr[i];
+      k_sum += k_arr[i];
+    }
+    printf("  [K-debug] side%d nuv=%d naabb=%d K: min=%.6f max=%.6f avg=%.6f\n",
+           task.eval_task_side, nuv, nk, k_min, k_max, k_sum / nk);
+    std::fflush(stdout);
+  }
+
   AABBResult res;
   res.naabb_width = naabb_width;
   res.d_aabb_center = center;
