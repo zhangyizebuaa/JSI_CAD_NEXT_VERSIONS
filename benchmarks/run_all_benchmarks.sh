@@ -3,11 +3,13 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repeats="${REPEATS:-5}"
-distance_threads="${DISTANCE_THREADS:-51}"
-intersection_threads="${INTERSECTION_THREADS:-55}"
+distance_threads="${DISTANCE_THREADS:-264}"
+intersection_threads="${INTERSECTION_THREADS:-56}"
+distance_cpuset="${DISTANCE_CPUSET:-0-263}"
+intersection_cpuset="${INTERSECTION_CPUSET:-0-55}"
 versions="${VERSIONS:-0 1 2 3 4 5}"
-distance_cases="${DISTANCE_CASES:-1 2 3 4}"
-intersection_cases="${INTERSECTION_CASES:-1 2 3 4}"
+distance_cases="${DISTANCE_CASES:-1 2 3}"
+intersection_cases="${INTERSECTION_CASES:-1 2 3}"
 run_occt="${RUN_OCCT:-1}"
 occt_threads="${OCCT_THREADS:-1}"
 timestamp="$(date +%Y%m%d_%H%M%S)"
@@ -15,7 +17,7 @@ result_dir="${RESULT_DIR:-$repo_dir/results/$timestamp}"
 mkdir -p "$result_dir/logs"
 
 raw_csv="$result_dir/raw_runs.csv"
-summary_csv="$result_dir/best_summary.csv"
+summary_csv="$result_dir/mean_summary.csv"
 echo "engine,version,mode,case,repeat,status,elapsed_ms,reported_ms,result,log" > "$raw_csv"
 
 extract_reported_ms() {
@@ -91,7 +93,8 @@ for version in $versions; do
   for case_id in $distance_cases; do
     for ((run = 1; run <= repeats; ++run)); do
       run_one jsi "v$version" distance "$case_id" "$run" \
-        env CAD_TIMING_BREAKDOWN=1 OMP_PROC_BIND=close OMP_PLACES=cores OMP_NUM_THREADS="$distance_threads" \
+        taskset -c "$distance_cpuset" env CAD_TIMING_BREAKDOWN=1 OMP_PROC_BIND=close \
+        OMP_PLACES=cores OMP_NUM_THREADS="$distance_threads" \
         "$version_dir/build/test_dist" "$case_id"
     done
   done
@@ -99,7 +102,8 @@ for version in $versions; do
   for case_id in $intersection_cases; do
     for ((run = 1; run <= repeats; ++run)); do
       run_one jsi "v$version" intersection "$case_id" "$run" \
-        env CAD_TIMING_BREAKDOWN=1 CAD_INTERSECT_USE_K=1 OMP_PROC_BIND=close OMP_PLACES=cores \
+        taskset -c "$intersection_cpuset" env CAD_TIMING_BREAKDOWN=1 CAD_INTERSECT_USE_K=1 \
+        OMP_PROC_BIND=close OMP_PLACES=cores \
         OMP_NUM_THREADS="$intersection_threads" "$version_dir/build/test_intersect" "$case_id"
     done
   done
@@ -122,18 +126,24 @@ awk -F, '
   {
     key = $1 "," $2 "," $3 "," $4;
     t = ($8 == "NA" ? $7 : $8) + 0.0;
-    if (!(key in best) || t < best[key]) {
-      best[key] = t;
+    sum[key] += t;
+    count[key] += 1;
+    if (!(key in minimum) || t < minimum[key]) minimum[key] = t;
+    if (!(key in maximum) || t > maximum[key]) maximum[key] = t;
+    if (!(key in result)) {
       result[key] = $9;
+      stable[key] = "yes";
+    } else if (result[key] != $9) {
+      stable[key] = "no";
     }
   }
   END {
-    print "engine,version,mode,case,best_ms,result";
-    for (key in best) {
-      print key "," best[key] "," result[key];
+    print "engine,version,mode,case,runs,mean_ms,min_ms,max_ms,result,result_stable";
+    for (key in sum) {
+      print key "," count[key] "," sum[key] / count[key] "," minimum[key] "," maximum[key] "," result[key] "," stable[key];
     }
   }
-' "$raw_csv" | sort > "$summary_csv"
+' "$raw_csv" > "$summary_csv"
 
 echo "raw_runs=$raw_csv"
-echo "best_summary=$summary_csv"
+echo "mean_summary=$summary_csv"

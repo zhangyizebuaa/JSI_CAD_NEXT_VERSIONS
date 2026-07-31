@@ -1,10 +1,14 @@
 #include "intersection.cuh"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <queue>
+#include <unordered_map>
 #include <utility>
 
 #include <vector>
@@ -320,16 +324,34 @@ static EvalAndConstructTask make_intersect_refine_task(const EvalAndConstructTas
   return t;
 }
 
+static void run_intersect_refine_batch(const std::vector<EvalAndConstructTask> &tasks, std::vector<AABBResult> &out) {
+  out.resize(tasks.size());
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) if (tasks.size() > 4)
+#endif
+  for (size_t k = 0; k < tasks.size(); ++k) {
+    EvalAndConstructTask task = tasks[k];
+    out[k] = run_evaluation_and_construction_task(task);
+  }
+}
+
 void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
   CAD_PROFILE_SCOPE("intersection");
+  const auto begin = std::chrono::steady_clock::now();
+  double evaluation_ms = 0.0;
+  double screening_ms = 0.0;
   initial_k_prints = 0;
   initial_u_span[1] = std::max(std::fabs(t1.ustop - t1.ustart), 1.0e-12f);
   initial_v_span[1] = std::max(std::fabs(t1.vstop - t1.vstart), 1.0e-12f);
   initial_u_span[2] = std::max(std::fabs(t2.ustop - t2.ustart), 1.0e-12f);
   initial_v_span[2] = std::max(std::fabs(t2.vstop - t2.vstart), 1.0e-12f);
   IntersectChain chain;
+  const auto initial_evaluation_begin = std::chrono::steady_clock::now();
   chain.side1.push_back(run_evaluation_and_construction_task(t1));
   chain.side2.push_back(run_evaluation_and_construction_task(t2));
+  evaluation_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                             initial_evaluation_begin)
+                       .count();
   printf("Compute_K AABB padding: %s\n", use_compute_k_padding() ? "on" : "off");
   std::fflush(stdout);
 
@@ -338,7 +360,10 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
     ++round;
     printf("Round: %d (pair refine, aligned_slots=%zu)\n", round, chain.side1.size());
     std::vector<IntersectPairRef> pairs;
+    const auto screening_begin = std::chrono::steady_clock::now();
     const int npairs = intersect_collect_pairs(chain, pairs);
+    screening_ms +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - screening_begin).count();
     printf("Round %d: overlap pairs = %d\n", round, npairs);
     if (round == 6) break;
     if (npairs == 0) break;
@@ -379,24 +404,130 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
       }
     }
 
-    IntersectChain next;
-    next.side1.resize(jobs.size());
-    next.side2.resize(jobs.size());
-    for (size_t k = 0; k < jobs.size(); ++k) {
-      const auto &job = jobs[k];
+    struct IntersectReuseJob {
+      size_t side1_unit;
+      size_t side2_unit;
+    };
+    std::vector<EvalAndConstructTask> tasks1;
+    std::vector<EvalAndConstructTask> tasks2;
+    std::vector<IntersectReuseJob> reuse_jobs;
+    std::unordered_map<uint64_t, size_t> task_index1;
+    std::unordered_map<uint64_t, size_t> task_index2;
+    tasks1.reserve(jobs.size());
+    tasks2.reserve(jobs.size());
+    reuse_jobs.reserve(jobs.size());
+    task_index1.reserve(jobs.size());
+    task_index2.reserve(jobs.size());
+    auto find_or_add_task = [](std::unordered_map<uint64_t, size_t> &task_index,
+                               std::vector<EvalAndConstructTask> &tasks, const IntersectEndpoint &endpoint,
+                               const EvalAndConstructTask &task) {
+      const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(endpoint.slot)) << 32) |
+                           static_cast<uint32_t>(endpoint.bbox);
+      const auto inserted = task_index.emplace(key, tasks.size());
+      if (inserted.second) tasks.push_back(task);
+      return inserted.first->second;
+    };
+
+    for (const auto &job : jobs) {
       if (job.side1.slot < 0 || job.side2.slot < 0 ||
           static_cast<size_t>(job.side1.slot) >= chain.side1.size() ||
           static_cast<size_t>(job.side2.slot) >= chain.side2.size()) {
         printf("ERROR! bad intersect endpoint slots=%d,%d\n", job.side1.slot, job.side2.slot);
         std::exit(-1);
       }
-      EvalAndConstructTask task1 = make_intersect_refine_task(
-          t1, chain.side1[static_cast<size_t>(job.side1.slot)], job.side1.bbox, 1, global_nuv);
-      EvalAndConstructTask task2 = make_intersect_refine_task(
-          t2, chain.side2[static_cast<size_t>(job.side2.slot)], job.side2.bbox, 2, global_nuv);
-      next.side1[k] = run_evaluation_and_construction_task(task1);
-      next.side2[k] = run_evaluation_and_construction_task(task2);
+      const auto &a1 = chain.side1[static_cast<size_t>(job.side1.slot)];
+      const auto &a2 = chain.side2[static_cast<size_t>(job.side2.slot)];
+      const size_t side1_unit =
+          find_or_add_task(task_index1, tasks1, job.side1,
+                           make_intersect_refine_task(t1, a1, job.side1.bbox, 1, global_nuv));
+      const size_t side2_unit =
+          find_or_add_task(task_index2, tasks2, job.side2,
+                           make_intersect_refine_task(t2, a2, job.side2.bbox, 2, global_nuv));
+      reuse_jobs.push_back({side1_unit, side2_unit});
+    }
+
+    std::vector<AABBResult> unique_res1;
+    std::vector<AABBResult> unique_res2;
+    const auto refinement_evaluation_begin = std::chrono::steady_clock::now();
+    run_intersect_refine_batch(tasks1, unique_res1);
+    run_intersect_refine_batch(tasks2, unique_res2);
+    evaluation_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                               refinement_evaluation_begin)
+                         .count();
+
+    IntersectChain next;
+    next.side1.resize(reuse_jobs.size());
+    next.side2.resize(reuse_jobs.size());
+    for (size_t k = 0; k < reuse_jobs.size(); ++k) {
+      next.side1[k] = unique_res1[reuse_jobs[k].side1_unit];
+      next.side2[k] = unique_res2[reuse_jobs[k].side2_unit];
     }
     chain = std::move(next);
+  }
+
+  // Export final candidate UV-center XYZ points for visualization (CAD_INTERSECT_EXPORT_POINTS=1).
+  if (std::getenv("CAD_INTERSECT_EXPORT_POINTS") != nullptr &&
+      std::strcmp(std::getenv("CAD_INTERSECT_EXPORT_POINTS"), "0") != 0) {
+    CAD_PROFILE_SCOPE("intersection_export_points");
+    const char *filename = "case_jsi_points.csv";
+    FILE *f = std::fopen(filename, "w");
+    if (f) {
+      std::fprintf(f, "x,y,z,side,slot,bbox\n");
+      // Evaluate UV centers of each final AABB from both sides.
+      auto export_side = [&](const std::vector<AABBResult> &side, const EvalAndConstructTask &tmpl, int side_id) {
+        for (size_t slot = 0; slot < side.size(); ++slot) {
+          const auto &aabb = side[slot];
+          const int n = aabb.naabb_width * aabb.naabb_width;
+          const float ustep = (aabb.ustop - aabb.ustart) / aabb.nuv;
+          const float vstep = (aabb.vstop - aabb.vstart) / aabb.nuv;
+          // For each AABB, evaluate the surface at its UV center point.
+          for (int bbox_id = 0; bbox_id < n; ++bbox_id) {
+            const int x = bbox_id % aabb.naabb_width;
+            const int y = bbox_id / aabb.naabb_width;
+            const float uc = aabb.ustart + ustep * (x + 0.5f);
+            const float vc = aabb.vstart + vstep * (y + 0.5f);
+            // Single-point evaluation: nuv=2 gives 4 points; use the bottom-left or interpolate.
+            // Simpler: use the AABB center directly (already computed).
+            const int idx = bbox_id;
+            const float cx = aabb.d_aabb_center[idx * 3];
+            const float cy = aabb.d_aabb_center[idx * 3 + 1];
+            const float cz = aabb.d_aabb_center[idx * 3 + 2];
+            // Refine: re-evaluate at exact UV center for accuracy.
+            const int mini_nuv = 2;
+            float mini_results[ONE_UV_SIZE * mini_nuv * mini_nuv];
+            const float mini_ustep = ustep;
+            const float mini_vstep = vstep;
+            EG_spline2dDeriv_irrational(tmpl.d_ivec, tmpl.d_data,
+                mini_ustep, mini_vstep, aabb.ustart + ustep * x, aabb.vstart + vstep * y,
+                mini_nuv, mini_results);
+            // Take the (0,0) corner of this 2x2 grid as approximation of the UV-center-aligned patch corner.
+            // For the actual center of the bbox, interpolate the 4 corners.
+            const float eval_x = (mini_results[0] + mini_results[ONE_UV_SIZE] +
+                                  mini_results[2 * ONE_UV_SIZE] + mini_results[3 * ONE_UV_SIZE]) * 0.25f;
+            const float eval_y = (mini_results[1] + mini_results[ONE_UV_SIZE + 1] +
+                                  mini_results[2 * ONE_UV_SIZE + 1] + mini_results[3 * ONE_UV_SIZE + 1]) * 0.25f;
+            const float eval_z = (mini_results[2] + mini_results[ONE_UV_SIZE + 2] +
+                                  mini_results[2 * ONE_UV_SIZE + 2] + mini_results[3 * ONE_UV_SIZE + 2]) * 0.25f;
+            std::fprintf(f, "%.8g,%.8g,%.8g,%d,%zu,%d\n", eval_x, eval_y, eval_z, side_id,
+                         static_cast<size_t>(slot), bbox_id);
+          }
+        }
+      };
+      export_side(chain.side1, t1, 1);
+      export_side(chain.side2, t2, 2);
+      std::fclose(f);
+      printf("Exported JSI-CAD candidate points to %s\n", filename);
+    } else {
+      printf("WARNING: could not open %s for writing\n", filename);
+    }
+  }
+
+  if (std::getenv("CAD_TIMING_BREAKDOWN") != nullptr) {
+    const double end_to_end_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+    const double kernel_ms = evaluation_ms + screening_ms;
+    printf("CAD_TIMING end_to_end_ms=%.6f kernel_ms=%.6f evaluation_ms=%.6f screening_ms=%.6f "
+           "orchestration_ms=%.6f\n",
+           end_to_end_ms, kernel_ms, evaluation_ms, screening_ms, std::max(0.0, end_to_end_ms - kernel_ms));
   }
 }

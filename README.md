@@ -88,16 +88,19 @@ Useful environment overrides:
 ```bash
 REPEATS=5
 VERSIONS="1 2 3 4 5"
-DISTANCE_CASES="1 2 3 4"
-INTERSECTION_CASES="1 2 3 4"
-DISTANCE_THREADS=51
-INTERSECTION_THREADS=55
+DISTANCE_CASES="1 2 3"
+INTERSECTION_CASES="1 2 3"
+DISTANCE_THREADS=264
+DISTANCE_CPUSET="0-263"
+INTERSECTION_THREADS=56
+INTERSECTION_CPUSET="0-55"
 RUN_OCCT=1
 OCCT_BUILD=/path/to/OCCT-8.0.0-build
 ```
 
 Test data are stored in every version under `examples/data/`. Distance uses
-`dist_case1.cu` through `dist_case4.cu`; intersection uses
+`dist_case1.cu` through `dist_case3.cu`; the current Case 3 is the scaled
+hard-wave workload previously kept as the fifth experimental case. Intersection uses
 `inter_case*-1_data.cu` and `inter_case*-2_data.cu`.
 
 Result validation uses the printed query result in each log:
@@ -108,7 +111,7 @@ Result validation uses the printed query result in each log:
   the same case.
 - OpenCASCADE: compare `distance=` or `intersection_curves=` in the OCCT log.
 
-The script stores full logs plus `raw_runs.csv` and `best_summary.csv` under
+The script stores full logs plus `raw_runs.csv` and `mean_summary.csv` under
 `results/<timestamp>/`.
 
 Set `CAD_TIMING_BREAKDOWN=1` to print both timing scopes used by the paper:

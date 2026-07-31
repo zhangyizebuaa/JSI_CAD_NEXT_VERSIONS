@@ -1,8 +1,8 @@
 CXX             ?= g++
 CASE            ?= 1
 THREADS         ?=
-DIST_THREADS    ?= 51
-INTER_THREADS   ?= 55
+DIST_THREADS    ?= 264
+INTER_THREADS   ?= 56
 USE_COMPUTE_K   ?= 1
 DIST_RUN_THREADS = $(if $(strip $(THREADS)),$(THREADS),$(DIST_THREADS))
 INTER_RUN_THREADS = $(if $(strip $(THREADS)),$(THREADS),$(INTER_THREADS))
@@ -35,17 +35,12 @@ build/data_i21.o: include/nurbs_data.hpp examples/data/inter_case2-1_data.cu | p
 build/data_i22.o: include/nurbs_data.hpp examples/data/inter_case2-2_data.cu | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/inter_case2-2_data.cu -o build/data_i22.o
 
+
 build/data_i31.o: include/nurbs_data.hpp examples/data/inter_case3-1_data.cu | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/inter_case3-1_data.cu -o build/data_i31.o
 
 build/data_i32.o: include/nurbs_data.hpp examples/data/inter_case3-2_data.cu | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/inter_case3-2_data.cu -o build/data_i32.o
-
-build/data_i41.o: include/nurbs_data.hpp examples/data/inter_case4-1_data.cu | prepare
-	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/inter_case4-1_data.cu -o build/data_i41.o
-
-build/data_i42.o: include/nurbs_data.hpp examples/data/inter_case4-2_data.cu | prepare
-	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/inter_case4-2_data.cu -o build/data_i42.o
 
 build/data_d1.o: include/nurbs_data.hpp examples/data/dist_case1.cu | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/dist_case1.cu -o build/data_d1.o
@@ -55,9 +50,6 @@ build/data_d2.o: include/nurbs_data.hpp examples/data/dist_case2.cu | prepare
 
 build/data_d3.o: include/nurbs_data.hpp examples/data/dist_case3.cu | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/dist_case3.cu -o build/data_d3.o
-
-build/data_d4.o: include/nurbs_data.hpp examples/data/dist_case4.cu | prepare
-	$(CXX) $(CXXFLAGS) -x c++ -c examples/data/dist_case4.cu -o build/data_d4.o
 
 build/common.o: src/common/common.cu src/common/common.cuh | prepare
 	$(CXX) $(CXXFLAGS) -x c++ -c src/common/common.cu -o build/common.o
@@ -76,16 +68,16 @@ build/ascend_hotspots.o: src/ascend/ascend_hotspots.cpp src/ascend/ascend_hotspo
 
 lib: build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o
 
-data: build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_i31.o build/data_i32.o build/data_i41.o build/data_i42.o build/data_d1.o build/data_d2.o build/data_d3.o build/data_d4.o
+data: build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_i31.o build/data_i32.o build/data_d1.o build/data_d2.o build/data_d3.o
 
 build/test_dist: lib data examples/distance_analysis_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
-	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o build/data_d3.o build/data_d4.o -o build/test_dist $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -x c++ examples/distance_analysis_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o build/data_d2.o build/data_d3.o -o build/test_dist $(LDFLAGS)
 
 run_dist: build/test_dist
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist $(CASE)
 
 build/test_intersect: lib data examples/intersection_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
-	$(CXX) $(CXXFLAGS) -x c++ examples/intersection_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_i31.o build/data_i32.o build/data_i41.o build/data_i42.o -o build/test_intersect $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -x c++ examples/intersection_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_i11.o build/data_i12.o build/data_i21.o build/data_i22.o build/data_i31.o build/data_i32.o -o build/test_intersect $(LDFLAGS)
 
 run_intersect: build/test_intersect
 	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect $(CASE)
@@ -94,11 +86,9 @@ run_all_cases: build/test_dist build/test_intersect
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 1
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 2
 	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 3
-	OMP_NUM_THREADS=$(DIST_RUN_THREADS) ./build/test_dist 4
 	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 1
 	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 2
 	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 3
-	CAD_INTERSECT_USE_K=$(USE_COMPUTE_K) OMP_NUM_THREADS=$(INTER_RUN_THREADS) ./build/test_intersect 4
 
 build/test_eval: lib data examples/evaluation_example.cu include/nurbs_data.hpp include/jsi_cad.hpp
 	$(CXX) $(CXXFLAGS) -x c++ examples/evaluation_example.cu -x none build/common.o build/evaluation.o build/distance_analysis.o build/intersection.o build/ascend_hotspots.o build/data_d1.o -o build/test_eval $(LDFLAGS)

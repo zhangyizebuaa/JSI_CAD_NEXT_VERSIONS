@@ -23,10 +23,15 @@
 #endif
 #include "common/profiler.hpp"
 
-static int global_nuv = 128;
+static int global_nuv = 16;
 static int next_nuv = 16;
 static int k_of_topk = 8;
 static int max_layers = 4;
+// 曲面大小基线 = case1 曲面的 3D AABB 对角线(从初始 512^2 网格 AABB 算出 ≈ 26.446)。
+// 自适应轮数: while (曲面大小 > 基线×16²) { 轮数++; 曲面大小 /= 16²; }。
+// 16 = 细化网格 nuv。当前案例(26.45 / 21.98 / 115.06)都远小于 基线×256,
+// 保持 4 轮、精度不变。
+static float dist_base_surface_size = 26.446f;
 static bool use_time = false;
 
 static void gather_idx_kernel_host(int *data_out, size_t size, int max_num, const int *pos, const int *pre) {
@@ -317,6 +322,28 @@ static EvalAndConstructTask make_dist_refine_task(const EvalAndConstructTask &tm
   return t;
 }
 
+// 3D bounding-box diagonal of a surface, from its initial full-grid AABB cells.
+// Used as the "surface size" that drives the adaptive round count.
+static float surface_aabb_diagonal(const AABBResult &res) {
+  float minc[3] = {1.0e30f, 1.0e30f, 1.0e30f};
+  float maxc[3] = {-1.0e30f, -1.0e30f, -1.0e30f};
+  const int n = res.naabb_width * res.naabb_width;
+  for (int k = 0; k < n; ++k) {
+    for (int a = 0; a < 3; ++a) {
+      const float c = res.d_aabb_center[k * 3 + a];
+      const float r = res.d_aabb_radius[k * 3 + a];
+      minc[a] = std::min(minc[a], c - r);
+      maxc[a] = std::max(maxc[a], c + r);
+    }
+  }
+  float diag_sq = 0.0f;
+  for (int a = 0; a < 3; ++a) {
+    const float d = maxc[a] - minc[a];
+    diag_sq += d * d;
+  }
+  return std::sqrt(diag_sq);
+}
+
 float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTask &t2) {
   CAD_PROFILE_SCOPE("minimum_distance");
   std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
@@ -327,6 +354,19 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
   current_stream_id = (current_stream_id + 1) % num_cuda_streams;
   chains[0].side2.push_back(run_evaluation_and_construction_task(b, cuda_streams[current_stream_id]));
   current_stream_id = (current_stream_id + 1) % num_cuda_streams;
+
+  // 按曲面大小决定细化轮数: 基线 = case1 曲面大小。每多一个 16² 倍率的曲面,
+  // 就多一轮细化,保证大曲面的绝对分辨率不降。当前案例保持 4 轮,精度与现状一致。
+  const float s1 = surface_aabb_diagonal(chains[0].side1[0]);
+  const float s2 = surface_aabb_diagonal(chains[0].side2[0]);
+  float surf_size = std::max(s1, s2);
+  const float base = std::max(1.0e-12f, dist_base_surface_size);
+  int max_layers_here = max_layers;
+  while (surf_size > base * 16.0f * 16.0f) {
+    ++max_layers_here;
+    surf_size /= 16.0f * 16.0f;
+  }
+  printf("[adaptive] surface size: %.6g (base %.6g) -> %d rounds\n", std::max(s1, s2), base, max_layers_here);
 
   float current_min_dist = 0.0f;
   int round = 0;
@@ -341,7 +381,7 @@ float minimum_distance(const EvalAndConstructTask &t1, const EvalAndConstructTas
     printf("  pairs to refine: %zu\n", pairs.size());
 
     if (pairs.empty()) break;
-    if (round == max_layers) break;
+    if (round == max_layers_here) break;
     if (round == 1) global_nuv = next_nuv;
 
     struct DistEndpoint {

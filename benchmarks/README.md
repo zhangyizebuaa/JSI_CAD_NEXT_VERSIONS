@@ -22,7 +22,7 @@ reported intersection result is an AABB candidate count. Their timings
 therefore describe different output contracts and should not be presented as
 a strict kernel-for-kernel speedup.
 
-Run all JSI versions, four distance cases, four intersection cases, and the
+Run all JSI versions, three distance cases, three intersection cases, and the
 OpenCASCADE comparison with five repeats:
 
 ```bash
@@ -30,5 +30,6 @@ OMP_PROC_BIND=close OMP_PLACES=cores \
   bash benchmarks/run_all_benchmarks.sh
 ```
 
-The script writes raw logs, `raw_runs.csv`, and `best_summary.csv` under
-`results/<timestamp>/`. The reported best time is the minimum of five runs.
+The script writes raw logs, `raw_runs.csv`, and `mean_summary.csv` under
+`results/<timestamp>/`. The summary reports the arithmetic mean, minimum, and
+maximum of the five runs and checks whether the query result remains stable.

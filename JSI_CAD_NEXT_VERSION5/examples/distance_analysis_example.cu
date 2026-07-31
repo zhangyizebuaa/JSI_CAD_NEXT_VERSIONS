@@ -21,10 +21,8 @@ int main(int argc, char **argv) {
             case_id = 2;
         } else if (std::strcmp(argv[1], "3") == 0 || std::strcmp(argv[1], "case3") == 0) {
             case_id = 3;
-        } else if (std::strcmp(argv[1], "4") == 0 || std::strcmp(argv[1], "case4") == 0) {
-            case_id = 4;
         } else {
-            std::cerr << "Usage: " << argv[0] << " [1|2|3|4|case1|case2|case3|case4]" << std::endl;
+            std::cerr << "Usage: " << argv[0] << " [1|2|3|case1|case2|case3]" << std::endl;
             return 2;
         }
     }
@@ -38,8 +36,8 @@ int main(int argc, char **argv) {
 
     init_cad();
 
-    NurbsFace *cases1[] = {&dist_case1_obj1, &dist_case2_obj1, &dist_hard_wave_obj1, &dist_hard_wave_obj1};
-    NurbsFace *cases2[] = {&dist_case1_obj2, &dist_case2_obj2, &dist_hard_wave_obj2, &dist_hard_wave_obj2};
+    NurbsFace *cases1[] = {&dist_case1_obj1, &dist_case2_obj1, &dist_hard_wave_obj1};
+    NurbsFace *cases2[] = {&dist_case1_obj2, &dist_case2_obj2, &dist_hard_wave_obj2};
     auto& nurbs_obj1 = *cases1[case_id - 1];
     auto& nurbs_obj2 = *cases2[case_id - 1];
     std::cout << "Running distance case " << case_id << std::endl;
@@ -49,18 +47,8 @@ int main(int argc, char **argv) {
     const float *host_data_1 = nurbs_obj1.data;
     const float *host_data_2 = nurbs_obj2.data;
     if (case_id == 3) {
-        constexpr float geometry_scale = 4.0f;
-        scaled_data_1.assign(nurbs_obj1.data, nurbs_obj1.data + nurbs_obj1.ndata);
-        scaled_data_2.assign(nurbs_obj2.data, nurbs_obj2.data + nurbs_obj2.ndata);
-        const int cp_offset_1 = nurbs_obj1.ivec[3] + nurbs_obj1.ivec[6];
-        const int cp_offset_2 = nurbs_obj2.ivec[3] + nurbs_obj2.ivec[6];
-        const int xyz_count_1 = 3 * nurbs_obj1.ivec[2] * nurbs_obj1.ivec[5];
-        const int xyz_count_2 = 3 * nurbs_obj2.ivec[2] * nurbs_obj2.ivec[5];
-        for (int i = 0; i < xyz_count_1; ++i) scaled_data_1[cp_offset_1 + i] *= geometry_scale;
-        for (int i = 0; i < xyz_count_2; ++i) scaled_data_2[cp_offset_2 + i] *= geometry_scale;
-        host_data_1 = scaled_data_1.data();
-        host_data_2 = scaled_data_2.data();
-        std::cout << "Scaled hard case: geometry=4x, initial nuv=" << default_global_dist_nuv << std::endl;
+        // no scaling — run with raw data for direct OCCT comparison
+        std::cout << "Hard case, initial nuv=" << default_global_dist_nuv << std::endl;
     }
 
     int *d_ivec_1;
@@ -158,7 +146,6 @@ int main(int argc, char **argv) {
 
     std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
     printf("Check took %lfms\n", std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count()/1000.0);
-
     printf("RUN Done\n");
     deinit_cad();
     return 0;

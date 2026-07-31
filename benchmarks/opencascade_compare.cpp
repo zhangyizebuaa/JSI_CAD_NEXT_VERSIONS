@@ -3,6 +3,7 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <GeomAPI_IntSS.hxx>
 #include <Geom_BSplineSurface.hxx>
+#include <Geom_Curve.hxx>
 #include <NCollection_Array1.hxx>
 #include <NCollection_Array2.hxx>
 #include <OSD_ThreadPool.hxx>
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
@@ -209,15 +211,44 @@ int main(int argc, char **argv) {
       print_samples(samples);
     } else if (mode == "intersection") {
       int curve_count = 0;
+      std::vector<gp_Pnt> sample_points;
       auto run = [&] {
         GeomAPI_IntSS intersection(surface1, surface2, 1.0e-7);
         if (!intersection.IsDone()) throw std::runtime_error("OpenCASCADE intersection failed");
         curve_count = intersection.NbLines();
+        sample_points.clear();
+        // Sample walking-line points from each intersection curve.
+        for (int ci = 1; ci <= curve_count; ++ci) {
+          const occ::handle<Geom_Curve> curve = intersection.Line(ci);
+          if (curve.IsNull()) continue;
+          const double t0 = curve->FirstParameter();
+          const double t1 = curve->LastParameter();
+          const int nsamples = 1000;
+          for (int s = 0; s <= nsamples; ++s) {
+            const double t = t0 + (t1 - t0) * static_cast<double>(s) / nsamples;
+            gp_Pnt pt;
+            curve->D0(t, pt);
+            sample_points.push_back(pt);
+          }
+        }
       };
       run();
+      // Export walking-line points to CSV.
+      const char *occt_filename = "case_occt_points.csv";
+      FILE *occt_f = std::fopen(occt_filename, "w");
+      if (occt_f) {
+        std::fprintf(occt_f, "x,y,z\n");
+        for (const auto &pt : sample_points) {
+          std::fprintf(occt_f, "%.12g,%.12g,%.12g\n", pt.X(), pt.Y(), pt.Z());
+        }
+        std::fclose(occt_f);
+        std::cerr << "Exported " << sample_points.size() << " OCCT walking-line points to "
+                  << occt_filename << '\n';
+      }
       const auto samples = measure_ms(repeats, run);
       std::cout << "intersection_curves=" << curve_count << '\n';
       print_samples(samples);
+      std::cout << "occt_samples=" << sample_points.size() << '\n';
     } else if (mode == "section") {
       int curve_count = 0;
       auto run = [&] {
