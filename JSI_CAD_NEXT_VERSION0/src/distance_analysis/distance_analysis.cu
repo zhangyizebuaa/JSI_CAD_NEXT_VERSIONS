@@ -18,7 +18,7 @@
 static int global_nuv = 16;
 static int next_nuv = 16;
 static int k_of_topk = 8;
-static int max_layers = 4;
+static int max_layers = 6;
 // 曲面大小基线 = case1 曲面的 3D AABB 对角线(从初始 512^2 网格 AABB 算出 ≈ 26.446)。
 // 自适应轮数: while (曲面大小 > 基线×16²) { 轮数++; 曲面大小 /= 16²; }。
 // 16 = 细化网格 nuv。当前案例(26.45 / 21.98 / 115.06)都远小于 基线×256,
