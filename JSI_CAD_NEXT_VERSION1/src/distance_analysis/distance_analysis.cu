@@ -87,9 +87,9 @@ AABBResult run_evaluation_and_construction_task(EvalAndConstructTask &task, CadS
   CAD_PROFILE_SCOPE("run_evaluation_and_construction_task_dist");
   (void)stream;
   int nuv = task.nuv;
-  float ustep = (task.ustop - task.ustart) / nuv;
-  float vstep = (task.vstop - task.vstart) / nuv;
   int naabb_width = nuv - 1;
+  float ustep = (task.ustop - task.ustart) / naabb_width;
+  float vstep = (task.vstop - task.vstart) / naabb_width;
 
   float *results = static_cast<float *>(allocate_from_workspace(ONE_UV_SIZE * nuv * nuv * sizeof(float)));
   float *center = static_cast<float *>(allocate_from_workspace(3 * naabb_width * naabb_width * sizeof(float)));
@@ -308,8 +308,8 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
 
 static EvalAndConstructTask make_dist_refine_task(const EvalAndConstructTask &tmpl, const AABBResult &aabb,
                                                   int bbox_id, int side, int nuv) {
-  const float ustep = (aabb.ustop - aabb.ustart) / aabb.nuv;
-  const float vstep = (aabb.vstop - aabb.vstart) / aabb.nuv;
+  const float ustep = (aabb.ustop - aabb.ustart) / aabb.naabb_width;
+  const float vstep = (aabb.vstop - aabb.vstart) / aabb.naabb_width;
   const int x = bbox_id % aabb.naabb_width;
   const int y = bbox_id / aabb.naabb_width;
   EvalAndConstructTask t = tmpl;

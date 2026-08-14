@@ -121,9 +121,9 @@ static void para_check_aabbs_host(int aabb_cnt1, const float *center1, const flo
 static AABBResult run_evaluation_and_construction_task(EvalAndConstructTask &task) {
   CAD_PROFILE_SCOPE("run_evaluation_and_construction_task_intersection");
   int nuv = task.nuv;
-  float ustep = (task.ustop - task.ustart) / nuv;
-  float vstep = (task.vstop - task.vstart) / nuv;
   int naabb_width = nuv - 1;
+  float ustep = (task.ustop - task.ustart) / naabb_width;
+  float vstep = (task.vstop - task.vstart) / naabb_width;
   float *results = static_cast<float *>(allocate_from_workspace(ONE_UV_SIZE * nuv * nuv * sizeof(float)));
   float *center = static_cast<float *>(allocate_from_workspace(3 * naabb_width * naabb_width * sizeof(float)));
   float *radius = static_cast<float *>(allocate_from_workspace(3 * naabb_width * naabb_width * sizeof(float)));
@@ -278,8 +278,8 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
         std::exit(-1);
       }
       auto &aabb = aabb_1_queue[res.first];
-      float ustep = (aabb.ustop - aabb.ustart) / aabb.nuv;
-      float vstep = (aabb.vstop - aabb.vstart) / aabb.nuv;
+      float ustep = (aabb.ustop - aabb.ustart) / aabb.naabb_width;
+      float vstep = (aabb.vstop - aabb.vstart) / aabb.naabb_width;
       int x = res.second % aabb.naabb_width;
       int y = res.second / aabb.naabb_width;
       EvalAndConstructTask t;
@@ -302,8 +302,8 @@ void intersection(EvalAndConstructTask t1, EvalAndConstructTask t2) {
         std::exit(-1);
       }
       auto &aabb = aabb_2_queue[res.first];
-      float ustep = (aabb.ustop - aabb.ustart) / aabb.nuv;
-      float vstep = (aabb.vstop - aabb.vstart) / aabb.nuv;
+      float ustep = (aabb.ustop - aabb.ustart) / aabb.naabb_width;
+      float vstep = (aabb.vstop - aabb.vstart) / aabb.naabb_width;
       int x = res.second % aabb.naabb_width;
       int y = res.second / aabb.naabb_width;
       EvalAndConstructTask t;

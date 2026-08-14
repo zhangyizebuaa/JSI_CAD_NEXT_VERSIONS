@@ -10,8 +10,8 @@ int main() {
     auto& nurbs_obj1 = dist_case1_obj1;
 
     int nuv = 1024;
-    float ustep = (nurbs_obj1.get_uend() - nurbs_obj1.get_ubegin()) / nuv;
-    float vstep = (nurbs_obj1.get_vend() - nurbs_obj1.get_vbegin()) / nuv;
+    float ustep = (nurbs_obj1.get_uend() - nurbs_obj1.get_ubegin()) / (nuv - 1);
+    float vstep = (nurbs_obj1.get_vend() - nurbs_obj1.get_vbegin()) / (nuv - 1);
 
     float *pResult = (float *)std::malloc(ONE_UV_SIZE * nuv * nuv * sizeof(float));
 
