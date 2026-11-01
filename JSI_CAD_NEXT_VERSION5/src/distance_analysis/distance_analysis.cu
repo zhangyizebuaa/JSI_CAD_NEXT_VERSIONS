@@ -1,4 +1,5 @@
 #include "distance_analysis.cuh"
+#include "aabb_distance_bounds.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -8,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <queue>
 #include <vector>
 
@@ -248,6 +250,16 @@ static void dist_pair_top_push(std::vector<DistPairRef> &best, int limit, float 
   std::sort(best.begin(), best.end(), dist_pair_ref_less);
 }
 
+static void dist_pair_top_push_bounded(std::vector<DistPairRef> &best, int limit, float d2, int slot, int i,
+                                       int j, const AABBResult &a1, const AABBResult &a2, double &upper_sq) {
+  if (static_cast<int>(best.size()) >= limit && d2 > best.back().d2) return;
+  const auto bounds = aabb_distance_bounds_sq(a1.d_aabb_center, a1.d_aabb_radius, static_cast<size_t>(i),
+                                               a2.d_aabb_center, a2.d_aabb_radius, static_cast<size_t>(j));
+  upper_sq = std::min(upper_sq, bounds.upper);
+  if (bounds.lower > upper_sq) return;
+  dist_pair_top_push(best, limit, d2, slot, i, j);
+}
+
 static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef> &pairs) {
   pairs.clear();
   if (ch.side1.empty() || ch.side1.size() != ch.side2.size()) return 0.0f;
@@ -275,6 +287,7 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
     { thread_bests.resize(static_cast<size_t>(omp_get_num_threads())); }
     auto &local = thread_bests[static_cast<size_t>(tid)];
     local.reserve(static_cast<size_t>(limit));
+    double local_upper_sq = std::numeric_limits<double>::infinity();
 #pragma omp for schedule(static) nowait
     for (size_t row = 0; row < rows.size(); ++row) {
       const int slot = rows[row].slot;
@@ -300,21 +313,22 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
         svst1_f32(packed_pg, d2_lanes, svcompact_f32(hit, d2v));
         svst1_s32(packed_pg, j_lanes, svcompact_s32(hit, svindex_s32(j, 1)));
         for (int h = 0; h < hits; ++h) {
-          dist_pair_top_push(local, limit, d2_lanes[h], slot, i, j_lanes[h]);
+          dist_pair_top_push_bounded(local, limit, d2_lanes[h], slot, i, j_lanes[h], a1, a2, local_upper_sq);
         }
       }
 #else
       for (int j = 0; j < n2; ++j) {
-        dist_pair_top_push(local, limit,
+        dist_pair_top_push_bounded(local, limit,
                            center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
                                               a2.d_aabb_center),
-                           slot, i, j);
+                           slot, i, j, a1, a2, local_upper_sq);
       }
 #endif
     }
   }
   std::vector<DistPairRef> best;
   best.reserve(static_cast<size_t>(limit));
+  double local_upper_sq = std::numeric_limits<double>::infinity();
   for (auto &local : thread_bests) {
     for (const auto &p : local) {
       dist_pair_top_push(best, limit, p.d2, p.slot, p.i, p.j);
@@ -330,15 +344,32 @@ static float dist_collect_top_pairs(const DistChain &ch, std::vector<DistPairRef
     const int n2 = a2.naabb_width * a2.naabb_width;
     for (int i = 0; i < n1; ++i) {
       for (int j = 0; j < n2; ++j) {
-        dist_pair_top_push(best, limit,
+        dist_pair_top_push_bounded(best, limit,
                            center_distance_sq(static_cast<size_t>(i), static_cast<size_t>(j), a1.d_aabb_center,
                                               a2.d_aabb_center),
-                           static_cast<int>(slot), i, j);
+                           static_cast<int>(slot), i, j, a1, a2, local_upper_sq);
       }
     }
   }
 #endif
-  pairs = best;
+  // Any box pair supplies an upper bound; discard selected pairs whose box lower bound exceeds it.
+  double upper_sq = std::numeric_limits<double>::infinity();
+  for (const auto &p : best) {
+    const auto &a1 = ch.side1[static_cast<size_t>(p.slot)];
+    const auto &a2 = ch.side2[static_cast<size_t>(p.slot)];
+    const auto bounds = aabb_distance_bounds_sq(a1.d_aabb_center, a1.d_aabb_radius, static_cast<size_t>(p.i),
+                                                 a2.d_aabb_center, a2.d_aabb_radius, static_cast<size_t>(p.j));
+    upper_sq = std::min(upper_sq, bounds.upper);
+  }
+  best.erase(std::remove_if(best.begin(), best.end(), [&](const DistPairRef &p) {
+               const auto &a1 = ch.side1[static_cast<size_t>(p.slot)];
+               const auto &a2 = ch.side2[static_cast<size_t>(p.slot)];
+               return aabb_distance_bounds_sq(a1.d_aabb_center, a1.d_aabb_radius, static_cast<size_t>(p.i),
+                                              a2.d_aabb_center, a2.d_aabb_radius, static_cast<size_t>(p.j))
+                          .lower > upper_sq;
+             }),
+             best.end());
+  pairs = std::move(best);
   return pairs.empty() ? 0.0f : std::sqrt(pairs.back().d2);
 }
 
